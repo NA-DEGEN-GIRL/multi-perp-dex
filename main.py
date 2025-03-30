@@ -46,7 +46,7 @@ SLEEP_BETWEEN_CALLS = 0.2
 
 # setting parameters
 coin = 'BTC'
-amount = 0.005
+amount = 0.03
 exchange_configs = {
     'backpack': {'create': True, 'side': 'long', 'need_close': False, 'key_params': BACKPACK_KEY},
     'edgex': {'create': True, 'side': 'long', 'need_close': False, 'key_params': EDGEX_KEY},

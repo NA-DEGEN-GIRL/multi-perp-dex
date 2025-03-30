@@ -26,6 +26,7 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text in ["check", "order", "close","reduce"]:
+        print(text)
         msg = await update.message.reply_text(f"🛠 `{text}` 실행 중...", parse_mode=ParseMode.MARKDOWN)
 
         # 실시간 subprocess 실행
@@ -48,7 +49,7 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass  # 메시지가 너무 자주 수정되면 에러날 수 있음
 
-            await asyncio.sleep(0.05)  # 텔레그램 rate limit 고려
+            await asyncio.sleep(0.1)  # 텔레그램 rate limit 고려
         await msg.edit_text(f"📦{text} 결과:\n```output\n{safe_output}```\n✅ Done",parse_mode=ParseMode.MARKDOWN_V2)
         
         process.wait()

@@ -19,3 +19,5 @@ __pycache__/
 fee.info
 volume_log.txt
 volume_summary.json
+
+*.log
