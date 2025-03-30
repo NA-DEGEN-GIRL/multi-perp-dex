@@ -133,7 +133,7 @@ def update_volume_summary(exchange: str, coin: str, amount: float, is_coll_volum
 
 def reverse_side(side:str):
     if side not in ['buy','sell']:
-        raise 'side must be in buy or sell'
+        raise ValueError('side must be in buy or sell')
     
     return 'buy' if side == 'sell' else 'sell'
 
