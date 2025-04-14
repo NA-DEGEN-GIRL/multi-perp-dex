@@ -1,0 +1,52 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from exchange_factory import create_exchange, symbol_create
+import asyncio
+from keys.pk_edgex import EDGEX_KEY
+
+# test done
+
+coin = 'BTC'
+symbol = symbol_create('edgex',coin)
+
+async def main():
+    edgex = await create_exchange('edgex', EDGEX_KEY)
+    
+    coll = await edgex.get_collateral()
+    print(coll)
+    
+    # limit sell
+    res = await edgex.create_order(symbol, 'sell', 0.01, price=86000)
+    print(res)
+    
+    # limit buy
+    res = await edgex.create_order(symbol, 'buy', 0.01, price=80000)
+    print(res)
+    
+    # get open orders
+    open_orders = await edgex.get_open_orders(symbol)
+    print(open_orders)
+
+    # cancel open orders
+    res = await edgex.cancel_orders(symbol,open_orders)
+    print(res)
+
+    # market buy
+    res = await edgex.create_order(symbol, 'buy', 0.015)
+    print(res)
+        
+    # market sell
+    res = await edgex.create_order(symbol, 'sell', 0.01)
+    print(res)
+    
+    # get position
+    position = await edgex.get_position(symbol)
+    print(position)
+        
+    # position close
+    #res = await edgex.close_position(symbol, position)
+    #print(res)
+
+if __name__ == "__main__":
+    asyncio.run(main())

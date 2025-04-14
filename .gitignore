@@ -1,0 +1,26 @@
+# 'keys/' 디렉토리를 무시하지 않음
+!keys/
+
+# 'keys/' 디렉토리 내 모든 파일을 무시
+keys/*
+
+# 'keys/' 디렉토리 내 'copy*.py' 패턴과 '__init__.py' 파일은 예외로 포함
+!keys/copy*.py
+!keys/__init__.py
+
+# not related
+logs/
+edgex_go/
+3.10/
+__pycache__/
+**/__pycache__/
+
+# only for me
+fee.info
+volume_log.txt
+volume_summary.json
+
+*.log
+
+.gpt*
+gpt*

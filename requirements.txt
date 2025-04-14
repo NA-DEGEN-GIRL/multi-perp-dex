@@ -1,0 +1,9 @@
+aiohttp==3.10.11
+ccxt==4.4.69
+cryptography==44.0.2
+grvt-pysdk==0.1.24
+lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@d687f96012c166df5c6ab59188f28db8d7469d8f
+python-telegram-bot==22.0
+PyNaCl==1.5.0
+starknet-py==0.25.0
+cairo-lang==0.10.3
