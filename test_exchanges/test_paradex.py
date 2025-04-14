@@ -18,7 +18,7 @@ async def main():
     print(coll)
     await asyncio.sleep(0.1)
     
-    
+    '''
     # limit sell
     res = await paradex.create_order(symbol, 'sell', 0.005, price=85000)
     print(res)
@@ -57,8 +57,8 @@ async def main():
     # open position close
     #res = await paradex.close_position(symbol, position)
     #print(res)
-    
+    '''
     await paradex.close()
-
+    
 if __name__ == "__main__":
     asyncio.run(main())

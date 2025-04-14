@@ -18,7 +18,7 @@ async def main():
     coll = await backpack.get_collateral()
     print(coll)
     await asyncio.sleep(0.2)
-    
+    '''
     # limit sell
     res = await backpack.create_order(symbol, 'sell', 0.002, price=86000)
     print(res)
@@ -56,7 +56,7 @@ async def main():
     # position close
     #res = await backpack.close_position(symbol, position)
     #print(res)
-    
+    '''
 
 if __name__ == "__main__":
     asyncio.run(main())

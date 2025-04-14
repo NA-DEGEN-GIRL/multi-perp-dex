@@ -8,7 +8,7 @@ logging.getLogger("asyncio").setLevel(logging.ERROR)
 from keys.pk_grvt import GRVT_KEY
 
 # test done
-coin = 'DOGE'
+coin = 'BTC'
 symbol = symbol_create('grvt',coin)
 
 async def main():
