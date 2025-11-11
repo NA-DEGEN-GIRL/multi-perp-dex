@@ -55,12 +55,12 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         price_decimals = m_info["price_decimals"]
 
         is_ask = 0 if side.lower() == 'buy' else 1
-        order_type_code = 1 if order_type == 'market' else 0
+        order_type_code = SignerClient.ORDER_TYPE_MARKET if order_type == 'market' else SignerClient.ORDER_TYPE_LIMIT
         
         if order_type == 'market':
-            time_in_force = 0
+            time_in_force = SignerClient.ORDER_TIME_IN_FORCE_IMMEDIATE_OR_CANCEL
         else:
-            time_in_force = 1  # ORDER_TIME_IN_FORCE_GOOD_TILL_TIME
+            time_in_force = SignerClient.ORDER_TIME_IN_FORCE_GOOD_TILL_TIME
         
         client_order_index = 0
 
@@ -82,7 +82,7 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         else:
             order_expiry = int((time.time() + 60 * 60 * 24) * 1000)
             
-        order, resp = await self.client.create_order(
+        resp = await self.client.create_order(
             market_index=market_index,
             client_order_index=client_order_index,
             base_amount=amount,
@@ -92,7 +92,9 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
             time_in_force=time_in_force,
             order_expiry=order_expiry,
         )
-        
+        # been changed to tuple
+        resp = resp[1]
+
         try:
             parsed = json.loads(resp.message)
             return {
@@ -230,10 +232,11 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         for order in open_orders:
             order_index = order["id"]
             try:
-                tx, resp = await self.client.cancel_order(
+                resp = await self.client.cancel_order(
                     market_index=market_id,
                     order_index=order_index
                 )
+                resp = resp[1]
                 results.append({
                     "id": order_index,
                     "status": resp.code,
