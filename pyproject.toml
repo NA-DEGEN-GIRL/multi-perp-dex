@@ -18,6 +18,11 @@ dependencies = [
   "lighter-sdk @ git+https://github.com/elliottech/lighter-python.git",
   "grvt-pysdk>=0.1.24",
   "cairo-lang==0.13.5",
+
+  # [ADDED] Windows(Py3.10, AMD64) 한정: fastecdsa 사전빌드 휠 자동 설치
+  # - pip, uv 모두 PEP 508 마커를 해석합니다.
+  # - 링크는 사용자가 제공한 공식 PyPI CDN(files.pythonhosted.org) 휠입니다.
+  "fastecdsa @ https://files.pythonhosted.org/packages/88/e4/0081bef22304409919e27e092b84f140e458901239ff9501f330cf593f0d/fastecdsa-2.3.0-cp310-cp310-win_amd64.whl ; python_version == '3.10' and platform_system == 'Windows' and platform_machine == 'AMD64'"
 ]
 
 

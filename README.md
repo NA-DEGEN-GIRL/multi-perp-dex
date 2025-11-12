@@ -17,7 +17,7 @@
 
 ## 요구 사항
 
-- Python 3.8 이상
+- Python 3.8 이상 / **Windows 사용시 3.10 (fastecdsa library때문에)**
 - 리눅스/맥OS 권장(Windows에서도 동작 가능하나 일부 의존성 빌드 시간이 길 수 있음)
 - pip 최신 버전 권장
 
