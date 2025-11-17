@@ -24,10 +24,13 @@ test_bool = {
 async def main():
     lighter = await create_exchange('lighter',LIGHTER_KEY)
 
+    price = await lighter.get_mark_price(symbol)
+    print(price)
+
     coll = await lighter.get_collateral()
     print(coll)
     await asyncio.sleep(0.1)
-
+    '''
     if test_bool["limit_sell"]:
         res = await lighter.create_order(symbol, 'sell', 0.001, price=110000)
         print(res)
@@ -64,8 +67,9 @@ async def main():
     if test_bool["close_position"]:
         res = await lighter.close_position(symbol, position)
         print(res)
-    
+    '''
     await lighter.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

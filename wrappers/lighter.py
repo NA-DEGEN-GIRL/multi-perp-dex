@@ -46,8 +46,12 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
     async def close(self):
         await self.client.close()
     
-    async def get_mark_price(self,symbol):
-        pass
+    async def get_mark_price(self, symbol):
+        m_info = self.market_info[symbol]
+        market_id = m_info["market_id"]
+        res = await self.apiOrder.order_book_details(market_id=market_id)
+        price = res.to_dict()["order_book_details"][0]["last_trade_price"]
+        return price
 
     async def create_order(self, symbol, side, amount, price=None, order_type='market'):
         if price is not None:

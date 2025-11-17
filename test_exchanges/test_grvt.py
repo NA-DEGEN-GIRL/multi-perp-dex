@@ -14,9 +14,12 @@ symbol = symbol_create('grvt',coin)
 async def main():
     grvt = await create_exchange('grvt',GRVT_KEY)
     
+    price = await grvt.get_mark_price(symbol)
+    print(price)
+
     position = await grvt.get_position(symbol)
     print(position)
-    
+    '''
     coll = await grvt.get_collateral()
     print(coll)
     
@@ -58,7 +61,7 @@ async def main():
     # position close
     res = await grvt.close_position(symbol, position)
     print(res)
-    
+    '''    
     await grvt.close()
 
 if __name__ == "__main__":
