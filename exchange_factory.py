@@ -38,6 +38,7 @@ SYMBOL_FORMATS = {
     "grvt":     lambda c: f"{c}_USDT_Perp",
     "backpack": lambda c: f"{c}_USDC_PERP",
     "lighter":  lambda c: c,
+    "treadfi_hl": lambda coin: f"{coin.split(':')[0]}_{coin.split(':')[1]}:PERP-USDC" if ":" in coin else f"{coin}:PERP-USDC"
 }
 
 def symbol_create(exchange_name: str, coin: str):
