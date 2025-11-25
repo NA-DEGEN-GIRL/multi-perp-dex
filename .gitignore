@@ -31,3 +31,5 @@ log_trim.py
 main_copy.py
 .dsignore
 directory_*
+.dev/
+**gpt**
