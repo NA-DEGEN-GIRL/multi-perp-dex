@@ -28,6 +28,8 @@ class TreadfiHlExchange(MultiPerpDexMixin, MultiPerpDex):
 		# if not given -> same as main_wallet
 		self.sub_wallet_address = sub_wallet_address if sub_wallet_address else main_wallet_address
 
+		self.walletAddress = None # ccxt style
+
 		self.account_name = account_name
 		self.url_base = "https://app.tread.fi/"
 		self._http: Optional[aiohttp.ClientSession] = None
