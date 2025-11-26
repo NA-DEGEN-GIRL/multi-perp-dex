@@ -58,6 +58,8 @@ wrappers/               # 거래소별 래퍼 구현
   grvt.py
   lighter.py
   paradex.py
+  treadfi_hl.py
+  treadfi_login.html
 mpdex/__init__.py       # 공개 API(지연 임포트), create_exchange/symbol_create 노출
 multi_perp_dex.py       # 공통 인터페이스(추상 클래스) 및 Mixin
 exchange_factory.py     # 문자열→래퍼 매핑, 지연 임포트 및 심볼 생성
@@ -78,6 +80,7 @@ cp keys/copy.pk_grvt.py     keys/pk_grvt.py
 cp keys/copy.pk_paradex.py  keys/pk_paradex.py
 cp keys/copy.pk_edgex.py    keys/pk_edgex.py
 cp keys/copy.pk_backpack.py keys/pk_backpack.py
+cp keys/copy.pk_treadfi_hl.py keys/pk_treadfi_hl.py
 ```
 
 템플릿은 아래와 같이 Dataclass로 정의되어 있으며, `exchange_factory.create_exchange()`가 요구하는 필드명을 그대로 사용합니다.
@@ -99,6 +102,7 @@ cp keys/copy.pk_backpack.py keys/pk_backpack.py
 - GRVT: `f"{COIN}_USDT_Perp"` (예: BTC_USDT_Perp)
 - Backpack: `f"{COIN}_USDC_PERP"` (예: BTC_USDC_PERP)
 - Lighter: 코인 심볼 그대로(예: BTC)
+- TreadFi: `f"{COIN}:PERP-USDC"` 덱스 사용시, `f"{DEX}_{COIN}:PERP-USDC"`, 스팟 현재 미지원
 
 ```python
 from mpdex import symbol_create
