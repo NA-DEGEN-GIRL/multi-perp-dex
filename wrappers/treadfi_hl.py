@@ -1,6 +1,7 @@
 # hyperliquid with treadfi (order by treadfi front api)
 # price and get position directly by hyperliquid ws (to do)
 from multi_perp_dex import MultiPerpDex, MultiPerpDexMixin
+from importlib import resources
 import aiohttp
 from aiohttp import web
 from aiohttp import TCPConnector
@@ -39,6 +40,7 @@ class TreadfiHlExchange(MultiPerpDexMixin, MultiPerpDex):
 		self._login_event: Optional[asyncio.Event] = None
 
 		self._http: Optional[aiohttp.ClientSession] = None
+
 
 		self.login_html_path = os.environ.get(
             "TREADFI_LOGIN_HTML",

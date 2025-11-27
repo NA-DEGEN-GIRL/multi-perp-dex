@@ -31,3 +31,6 @@ dependencies = [
 packages = ["mpdex", "wrappers"]
 # 루트에 있는 단일 모듈도 함께 배포
 py-modules = ["multi_perp_dex", "exchange_factory"]
+
+[tool.setuptools.package-data]
+ "mpdex.wrappers" = ["*.html"]
