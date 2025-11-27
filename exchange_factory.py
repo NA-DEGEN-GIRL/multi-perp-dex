@@ -41,7 +41,7 @@ SYMBOL_FORMATS = {
     "grvt":     lambda c: f"{c}_USDT_Perp",
     "backpack": lambda c: f"{c}_USDC_PERP",
     "lighter":  lambda c: c,
-    "treadfi.hyperliquid": lambda coin: f"{coin.split(':')[0]}_{coin.split(':')[1]}:PERP-USDC" if ":" in coin else f"{coin}:PERP-USDC"
+    "treadfi.hyperliquid": lambda coin: f"{coin.split(':')[0].lower()}_{coin.split(':')[1].upper()}:PERP-USDC" if ":" in coin else f"{coin.upper()}:PERP-USDC"
 }
 
 def symbol_create(exchange_platform: str, coin: str):
