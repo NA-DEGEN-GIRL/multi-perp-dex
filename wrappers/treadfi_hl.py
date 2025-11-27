@@ -9,7 +9,7 @@ import asyncio
 import json
 import os
 import time
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from eth_account import Account  
 from eth_account.messages import encode_defunct  
 
@@ -21,6 +21,7 @@ class TreadfiHlExchange(MultiPerpDexMixin, MultiPerpDex):
 		main_wallet_address: str = None, # required
         sub_wallet_address: str = None, # optional
         account_name: str = None, # required
+		options: Any = None, # options
     ):
 		# used for signing
 		self.main_wallet_address = main_wallet_address
@@ -41,6 +42,7 @@ class TreadfiHlExchange(MultiPerpDexMixin, MultiPerpDex):
 
 		self._http: Optional[aiohttp.ClientSession] = None
 
+		self.options = None # for purpose
 
 		self.login_html_path = os.environ.get(
             "TREADFI_LOGIN_HTML",
