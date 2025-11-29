@@ -15,6 +15,7 @@ dependencies = [
   "pynacl>=1.5",
   "ccxt>=4.4",     
   "eth-hash==0.7.1",
+  "curl-cffi>=0.13.0",
   "lighter-sdk @ git+https://github.com/elliottech/lighter-python.git ; sys_platform != 'win32'",
   "lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@c9b8de6fd6864ede0fd7fb61d85ffb3614d178c9 ; sys_platform == 'win32'",
   "grvt-pysdk>=0.1.24",

@@ -36,10 +36,12 @@ ccxt==4.4.75
 certifi==2025.1.31
     # via
     #   ccxt
+    #   curl-cffi
     #   requests
 cffi==1.17.1
     # via
     #   cryptography
+    #   curl-cffi
     #   pycares
     #   pynacl
 charset-normalizer==3.4.1
@@ -48,6 +50,8 @@ ckzg==2.1.1
     # via eth-account
 cryptography==44.0.2
     # via ccxt
+curl-cffi==0.13.0
+    # via -r requirements.in
 cytoolz==1.0.1
     # via eth-utils
 dacite==1.9.2
