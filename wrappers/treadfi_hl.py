@@ -79,7 +79,85 @@ class TreadfiHlExchange(MultiPerpDexMixin, MultiPerpDex):
 
 	async def __aexit__(self, exc_type, exc, tb):  # [ADDED]
 		await self.aclose()
-	
+
+    # ----------------------------
+    # HTML (브라우저 지갑 서명 UI)
+    # ----------------------------
+	def _login_html(self) -> str:
+		"""
+		최소 UI: 계정 요청 -> 메시지 수신 -> personal_sign -> 제출
+		"""
+		return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TreadFi Sign-In</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 24px; }}
+.row {{ margin: 8px 0; }}
+input, textarea, button {{ font-size: 14px; }}
+input, textarea {{ width: 100%; max-width: 560px; }}
+.addr {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
+</style>
+</head>
+<body>
+<h2>TreadFi Login</h2>
+<div class="row"><button id="connect">Connect Wallet</button></div>
+<div class="row addr" id="address"></div>
+<div class="row"><input id="msg" placeholder="Message to sign" /></div>
+<div class="row"><button id="sign">Sign & Login</button></div>
+<div class="row">Result:</div>
+<div class="row"><textarea id="result" rows="3"></textarea></div>
+<script>
+let account = null, lastNonce = null;
+
+async function fetchNonce() {{
+const r = await fetch('/nonce');
+const j = await r.json();
+if (j.error) throw new Error(j.error);
+lastNonce = j.nonce;
+document.getElementById('msg').value = j.message;
+}}
+window.addEventListener('load', () => {{
+fetchNonce().catch(e => alert('Failed to get nonce: ' + e.message));
+}});
+
+document.getElementById('connect').onclick = async () => {{
+if (!window.ethereum) {{ alert('Please install Rabby or MetaMask'); return; }}
+const acc = await window.ethereum.request({{ method: 'eth_requestAccounts' }});
+account = acc[0];
+document.getElementById('address').innerText = 'Wallet: ' + account;
+}};
+
+document.getElementById('sign').onclick = async () => {{
+if (!account) return alert('Please connect your wallet first.');
+const msg = document.getElementById('msg').value;
+if (!msg) return alert('No message to sign.');
+try {{
+const sign = await window.ethereum.request({{
+method: 'personal_sign',
+params: [msg, account],
+}});
+document.getElementById('result').value = sign;
+
+const resp = await fetch('/submit', {{
+method: 'POST',
+headers: {{ 'Content-Type': 'application/json' }},
+body: JSON.stringify({{ address: account, signature: sign, nonce: lastNonce }})
+}});
+const text = await resp.text();
+if (!resp.ok) throw new Error(text);
+alert(text);
+}} catch (e) {{
+alert('Signing/Submit failed: ' + e.message);
+}}
+}};
+</script>
+</body>
+</html>
+"""
+
 	async def login(self):
 		"""
 		1) session cookies가 있을경우 get_user_metadata 를 통해 정상 session인지 확인, 아닐시 2)->3)
@@ -123,14 +201,8 @@ class TreadfiHlExchange(MultiPerpDexMixin, MultiPerpDex):
 		# 3) 브라우저 서명 (포트 6974)
 		self._login_event = asyncio.Event()
 
-		async def handle_index(_req):
-			if not os.path.exists(self.login_html_path):
-				return web.Response(
-					text=f"Missing login HTML at: {self.login_html_path}",
-					content_type="text/plain",
-					status=500,
-				)
-			return web.FileResponse(path=self.login_html_path)
+		async def handle_index(_req: web.Request):
+			return web.Response(text=self._login_html(), content_type="text/html")
 
 		async def handle_nonce(_req):
 			try:
