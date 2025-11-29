@@ -8,7 +8,8 @@ def _load(exchange_platform: str):  # [ADDED] 필요한 경우에만 모듈 로�
         "grvt": ("wrappers.grvt", "GrvtExchange"),
         "backpack": ("wrappers.backpack", "BackpackExchange"),
         "treadfi.hyperliquid": ("wrappers.treadfi_hl", "TreadfiHlExchange"),
-        "variational": ("wrappers.variational", "VariationalExchange")
+        "variational": ("wrappers.variational", "VariationalExchange"),
+        "pacifica": ("wrappers.pacifica", "PacificaExchange"),
     }
     try:
         mod, cls = mapping[exchange_platform]
@@ -35,6 +36,8 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
         return Ex(key_params.session_cookies, key_params.evm_private_key, key_params.main_wallet_address, key_params.sub_wallet_address, key_params.account_name)
     elif exchange_platform == "variational":
         return Ex(key_params.evm_wallet_address, key_params.session_cookies, key_params.evm_private_key)
+    elif exchange_platform == "pacifica":
+        return Ex(key_params.public_key, key_params.agent_public_key, key_params.agent_private_key)
     else:
         raise ValueError(f"Unsupported exchange: {exchange_platform}")
 
@@ -45,7 +48,8 @@ SYMBOL_FORMATS = {
     "backpack": lambda c: f"{c}_USDC_PERP",
     "lighter":  lambda c: c,
     "treadfi.hyperliquid": lambda coin: f"{coin.split(':')[0].lower()}_{coin.split(':')[1].upper()}:PERP-USDC" if ":" in coin else f"{coin.upper()}:PERP-USDC",
-    "variational": lambda coin: coin.upper() # same
+    "variational": lambda coin: coin.upper(), # same
+    "pacifica": lambda coin: coin.upper(), # same
 }
 
 def symbol_create(exchange_platform: str, coin: str):

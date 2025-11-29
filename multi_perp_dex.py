@@ -33,9 +33,12 @@ class MultiPerpDexMixin:
     async def get_open_orders(self, symbol):
         return await self.exchange.fetch_open_orders(symbol)
     
-    async def close_position(self, symbol, position):
+    async def close_position(self, symbol, position, *, is_reduce_only=False):
         if not position:
             return None
         size = position.get('size')
         side = 'sell' if position.get('side').lower() in ['long','buy'] else 'buy'
-        return await self.create_order(symbol, side, size, price=None, order_type='market')
+        if is_reduce_only:
+            return await self.create_order(symbol, side, size, price=None, order_type='market', is_reduce_only=True)
+        else:
+            return await self.create_order(symbol, side, size, price=None, order_type='market')
