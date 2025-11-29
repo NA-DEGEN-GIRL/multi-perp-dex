@@ -37,7 +37,7 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
     elif exchange_platform == "variational":
         return Ex(key_params.evm_wallet_address, key_params.session_cookies, key_params.evm_private_key)
     elif exchange_platform == "pacifica":
-        return Ex(key_params.public_key, key_params.agent_public_key, key_params.agent_private_key).init()
+        return await Ex(key_params.public_key, key_params.agent_public_key, key_params.agent_private_key).init()
     else:
         raise ValueError(f"Unsupported exchange: {exchange_platform}")
 
