@@ -25,6 +25,7 @@ def __getattr__(name):
         "TreadfiHlExchange": ("wrappers.treadfi_hl","TreadfiHlExchange"),
         "VariationalExchange": ("wrappers.variational","VariationalExchange"),
         "PacificaExchange": ("wrappers.pacifica","PacificaExchange"),
+        "HyperliquidExchange": ("wrappers.hyperliquid","HyperliquidExchange"),
     }
     if name in mapping:
         mod, attr = mapping[name]
