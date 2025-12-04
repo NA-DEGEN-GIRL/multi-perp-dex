@@ -21,6 +21,17 @@ HYPERLIQUID_KEY = HyperliquidKEY(
     vault_address = None,
     builder_code = None,
     builder_fee_pair = None, # {'base':10,'dex':10}, dex없으면 base로 함, dex를 상세하게 'xyz':10 이런형태로 나타내도됨, 기본은 'dex'를 따름
-    fetch_by_ws = False
+    fetch_by_ws = True
     )
 
+HYPERLIQUID_KEY2 = HyperliquidKEY(
+    wallet_address = None,
+    wallet_private_key = None,
+    agent_api_address = None,
+    agent_api_private_key = None,
+    by_agent = True,
+    vault_address = None,
+    builder_code = None,
+    builder_fee_pair = None, # {'base':10,'dex':10}, dex없으면 base로 함, dex를 상세하게 'xyz':10 이런형태로 나타내도됨, 기본은 'dex'를 따름
+    fetch_by_ws = True
+    )

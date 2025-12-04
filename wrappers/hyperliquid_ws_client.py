@@ -182,8 +182,8 @@ class HLWSClientRaw:
         self.positions: Dict[str, Dict[str, Any]] = {}           # coin -> position(dict)
         self.open_orders: List[Dict[str, Any]] = []              # raw list
         self.balances: Dict[str, float] = {}                          # token -> total
-        self.spot_pair_ctxs: Dict[str, Dict[str, Any]] = {}      # 'BASE/QUOTE' -> ctx(dict)
-        self.spot_base_px: Dict[str, float] = {}                 # BASE -> px (QUOTE=USDC일 때)
+        #self.spot_pair_ctxs: Dict[str, Dict[str, Any]] = {}      # 'BASE/QUOTE' -> ctx(dict)
+        #self.spot_base_px: Dict[str, float] = {}                 # BASE -> px (QUOTE=USDC일 때)
         self.collateral_quote: Optional[str] = None              # 예: 'USDC'
         self.server_time: Optional[int] = None                   # ms
         self.agent: Dict[str, Any] = {}                          # {'address': .., 'validUntil': ..}
@@ -203,6 +203,36 @@ class HLWSClientRaw:
         # 이벤트 키 충돌 방지: kind 네임스페이스를 포함한 문자열 키 사용
         #   예) "perp|BTC", "spot_base|PURR", "spot_pair|PURR/USDC"
         self._price_events: Dict[str, asyncio.Event] = {}  # comment: {'perp|BTC': Event(), ...}
+
+    # 외부(풀)에서 DEX 순서를 주입
+    def set_dex_order(self, order: List[str]) -> None:
+        try:
+            ks = []
+            seen = set()
+            for k in order:
+                key = str(k).lower().strip()
+                if not key or key in seen:
+                    continue
+                ks.append(key)
+                seen.add(key)
+            if ks:
+                self.dex_keys = ks
+        except Exception:
+            pass
+    
+    # 외부(풀)에서 Spot 메타를 주입
+    def set_spot_meta(
+        self,
+        idx2name: Dict[int, str],
+        name2idx: Dict[str, int],
+        pair_by_index: Dict[int, str],
+        bq_by_index: Dict[int, tuple[str, str]],
+    ) -> None:
+        # 내부에서 그대로 참조해도 되지만, 방어적으로 복사
+        self.spot_index_to_name = dict(idx2name or {})
+        self.spot_name_to_index = {str(k).upper(): int(v) for k, v in (name2idx or {}).items()}
+        self.spot_asset_index_to_pair = dict(pair_by_index or {})
+        self.spot_asset_index_to_bq = dict(bq_by_index or {})
 
     def _event_key(self, kind: str, key: str) -> str:
         return f"{kind}|{str(key).upper().strip()}"
@@ -304,135 +334,6 @@ class HLWSClientRaw:
             key = _sub_key(sub)
             if key not in self._active_subs:
                 await self._send_subscribe(sub)
-
-    async def ensure_spot_token_map_http(self) -> None:
-        """
-        REST info(spotMeta)를 통해
-        - 토큰 인덱스 <-> 이름(USDC, PURR, ...) 맵
-        - 스팟 페어 인덱스(spotInfo.index) <-> 'BASE/QUOTE' 및 (BASE, QUOTE) 맵
-        을 1회 로드/갱신한다.
-        """
-        url = f"{self.http_base}/info"
-        payload = {"type": "spotMeta"}
-        headers = {"Content-Type": "application/json"}
-
-        def _post():
-            data = json_dumps(payload).encode("utf-8")
-            req = urllib_request.Request(url, data=data, headers=headers, method="POST")
-            with urllib_request.urlopen(req, timeout=10) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-
-        try:
-            resp = await asyncio.to_thread(_post)
-        except (HTTPError, URLError) as e:
-            ws_logger.warning(f"[spotMeta] http error: {e}")
-            return
-        except Exception as e:
-            ws_logger.warning(f"[spotMeta] error: {e}")
-            return
-
-        try:
-            tokens = (resp or {}).get("tokens") or []
-            universe = (resp or {}).get("universe") or (resp or {}).get("spotInfos") or []
-
-            # 1) 토큰 맵(spotMeta.tokens[].index -> name)
-            idx2name: Dict[int, str] = {}
-            name2idx: Dict[str, int] = {}
-            for t in tokens:
-                if isinstance(t, dict) and "index" in t and "name" in t:
-                    try:
-                        idx = int(t["index"])
-                        name = str(t["name"]).upper().strip()
-                        if not name:
-                            continue
-                        if idx in idx2name and idx2name[idx] != name:
-                            ws_logger.warning(f"[spotMeta] duplicate token index {idx}: {idx2name[idx]} -> {name}")
-                        idx2name[idx] = name
-                        name2idx[name] = idx
-                    except Exception as ex:
-                        ws_logger.debug(f"[spotMeta] skip token={t} err={ex}")
-            self.spot_index_to_name = idx2name
-            self.spot_name_to_index = name2idx
-            ws_logger.info(f"[spotMeta] loaded tokens={len(idx2name)} (e.g. USDC idx={name2idx.get('USDC')})")
-
-            # 2) 페어 맵(spotInfo.index -> 'BASE/QUOTE' 및 (BASE, QUOTE))
-            pair_by_index: Dict[int, str] = {}
-            bq_by_index: Dict[int, tuple[str, str]] = {}
-            ok = 0
-            fail = 0
-            for si in universe:
-                if not isinstance(si, dict):
-                    continue
-                # 필수: spotInfo.index
-                try:
-                    s_idx = int(si.get("index"))
-                except Exception:
-                    fail += 1
-                    continue
-
-                # 우선 'tokens': [baseIdx, quoteIdx] 배열 처리
-                base_idx = None
-                quote_idx = None
-                toks = si.get("tokens")
-                if isinstance(toks, (list, tuple)) and len(toks) >= 2:
-                    try:
-                        base_idx = int(toks[0])
-                        quote_idx = int(toks[1])
-                    except Exception:
-                        base_idx, quote_idx = None, None
-
-                # 보조: 환경별 키(base/baseToken/baseTokenIndex, quote/...)
-                if base_idx is None:
-                    bi = si.get("base") or si.get("baseToken") or si.get("baseTokenIndex")
-                    try:
-                        base_idx = int(bi) if bi is not None else None
-                    except Exception:
-                        base_idx = None
-                if quote_idx is None:
-                    qi = si.get("quote") or si.get("quoteToken") or si.get("quoteTokenIndex")
-                    try:
-                        quote_idx = int(qi) if qi is not None else None
-                    except Exception:
-                        quote_idx = None
-
-                base_name = idx2name.get(base_idx) if base_idx is not None else None
-                quote_name = idx2name.get(quote_idx) if quote_idx is not None else None
-
-                # name 필드가 'BASE/QUOTE'면 그대로, '@N' 등인 경우 토큰명으로 합성
-                name_field = si.get("name")
-                pair_name = None
-                if isinstance(name_field, str) and "/" in name_field:
-                    pair_name = name_field.strip().upper()
-                    # base/quote 이름 보완
-                    try:
-                        b, q = pair_name.split("/", 1)
-                        base_name = base_name or b
-                        quote_name = quote_name or q
-                    except Exception:
-                        pass
-                else:
-                    if base_name and quote_name:
-                        pair_name = f"{base_name}/{quote_name}"
-
-                if pair_name and base_name and quote_name:
-                    pair_by_index[s_idx] = pair_name
-                    bq_by_index[s_idx] = (base_name, quote_name)
-                    ok += 1
-                    # 처음 몇 개 샘플 디버깅
-                    if logging.getLogger().isEnabledFor(logging.DEBUG) and ok <= 5:
-                        ws_logger.debug(f"[spotMeta] pair idx={s_idx} tokens=({base_idx},{quote_idx}) "
-                                    f"names=({base_name},{quote_name}) nameField={name_field!r} -> {pair_name}")
-                else:
-                    fail += 1
-                    if logging.getLogger().isEnabledFor(logging.DEBUG) and fail <= 5:
-                        ws_logger.debug(f"[spotMeta] FAIL idx={s_idx} raw={si}")
-
-            self.spot_asset_index_to_pair = pair_by_index
-            self.spot_asset_index_to_bq = bq_by_index
-            ws_logger.info(f"[spotMeta] loaded spot pairs={ok} (fail={fail})")
-
-        except Exception as e:
-            ws_logger.warning(f"[spotMeta] parse error: {e}", exc_info=True)
 
     async def _send_subscribe(self, sub: dict) -> None:
         """subscribe 메시지 전송(중복 방지)."""
@@ -726,6 +627,7 @@ class HLWSClientRaw:
             return None
         p = str(pair).strip().upper()
 
+        """
         # 1) webData2/3에서 온 페어 컨텍스트가 있으면 거기서 mid/mark/prev 순으로 사용
         ctx = self.spot_pair_ctxs.get(p)
         if isinstance(ctx, dict):
@@ -736,6 +638,7 @@ class HLWSClientRaw:
                         return float(v)
                     except Exception:
                         continue
+        """
 
         # 2) allMids에서 유지하는 페어 가격 맵(숫자) 사용
         v = self.spot_pair_prices.get(p)
@@ -757,8 +660,8 @@ class HLWSClientRaw:
 
         return None
 
-    def get_spot_px_base(self, base: str) -> Optional[float]:
-        return self.spot_base_px.get(base.upper())
+    #def get_spot_px_base(self, base: str) -> Optional[float]:
+    #    return self.spot_base_px.get(base.upper())
 
     def get_open_orders(self) -> List[Dict[str, Any]]:
         return list(self.open_orders)
@@ -1079,6 +982,51 @@ class HLWSClientPool:
         self._clients: dict[str, HLWSClientRaw] = {}
         self._refcnt: dict[str, int] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        # 공용 메타 저장소(+ 보호용 락)
+        self._shared_lock = asyncio.Lock()
+        self._shared_primed: bool = False
+        self._shared_dex_order: List[str] = ["hl"]
+        self._shared_spot_idx2name: Dict[int, str] = {}
+        self._shared_spot_name2idx: Dict[str, int] = {}
+        self._shared_spot_pair_by_index: Dict[int, str] = {}
+        self._shared_spot_bq_by_index: Dict[int, tuple[str, str]] = {}
+
+                
+    # 초기 1회만 공유 메타를 주입(이미 primed면 무시)
+    async def prime_shared_meta(
+        self,
+        *,
+        dex_order: Optional[List[str]] = None,
+        idx2name: Optional[Dict[int, str]] = None,
+        name2idx: Optional[Dict[str, int]] = None,
+        pair_by_index: Optional[Dict[int, str]] = None,
+        bq_by_index: Optional[Dict[int, Tuple[str, str]]] = None,
+    ) -> None:
+        async with self._shared_lock:
+            if self._shared_primed:
+                return
+            # 정규화
+            ks, seen = [], set()
+            for k in (dex_order or ["hl"]):
+                kk = str(k).lower().strip()
+                if kk and kk not in seen:
+                    ks.append(kk); seen.add(kk)
+            self._shared_dex_order = ks or ["hl"]
+            self._shared_spot_idx2name = dict(idx2name or {})
+            self._shared_spot_name2idx = {str(k).upper(): int(v) for k, v in (name2idx or {}).items()}
+            self._shared_spot_pair_by_index = dict(pair_by_index or {})
+            self._shared_spot_bq_by_index = dict(bq_by_index or {})
+            self._shared_primed = True  # comment: 이후 호출은 무시
+
+    def _apply_shared_to_client_unlocked(self, c: HLWSClientRaw) -> None:
+        # [INTERNAL] _shared_lock 보유 상태에서만 호출
+        c.set_dex_order(self._shared_dex_order or ["hl"])
+        c.set_spot_meta(
+            self._shared_spot_idx2name,
+            self._shared_spot_name2idx,
+            self._shared_spot_pair_by_index,
+            self._shared_spot_bq_by_index,
+        )
 
     def _key(self, ws_url: str, address: Optional[str]) -> str:
         addr = (address or "").lower().strip()
@@ -1097,6 +1045,12 @@ class HLWSClientPool:
         http_base: str,
         address: Optional[str],
         dex: Optional[str] = None,
+        # 최초 1회 주입용(선택)
+        dex_order: Optional[List[str]] = None,
+        idx2name: Optional[Dict[int, str]] = None,
+        name2idx: Optional[Dict[str, int]] = None,
+        pair_by_index: Optional[Dict[int, str]] = None,
+        bq_by_index: Optional[Dict[int, Tuple[str, str]]] = None,
     ) -> HLWSClientRaw:
         """
         풀에서 (ws_url,address) 키로 클라이언트를 획득(없으면 생성).
@@ -1105,6 +1059,15 @@ class HLWSClientPool:
           - connect + 기본 subscribe(webData3/spotState는 address가 있을 때만)
         이후 요청된 dex의 allMids를 추가 구독.
         """
+        # per-key 락 전에 공유 스냅샷을 1회 주입 시도(데드락 회피)
+        await self.prime_shared_meta(
+            dex_order=dex_order,
+            idx2name=idx2name,
+            name2idx=name2idx,
+            pair_by_index=pair_by_index,
+            bq_by_index=bq_by_index,
+        )
+
         key = self._key(ws_url, address)
         lock = self._get_lock(key)
         async with lock:
@@ -1118,7 +1081,8 @@ class HLWSClientPool:
                     coins=[],
                     http_base=http_base,
                 )
-                await client.ensure_spot_token_map_http()
+                async with self._shared_lock:
+                    self._apply_shared_to_client_unlocked(client)
                 await client.ensure_connected_and_subscribed()
                 self._clients[key] = client
                 self._refcnt[key] = 0
@@ -1147,301 +1111,3 @@ class HLWSClientPool:
                 # 락은 재사용 가능하므로 남겨둠
 
 WS_POOL = HLWSClientPool()
-
-# -------------------- 메인 로직 --------------------
-
-def _fmt_num(v: Any, nd: int = 6, none: str = "-") -> str:
-    try:
-        f = float(v)
-        if abs(f) >= 1:
-            return f"{f:,.{max(2, min(nd, 8))}f}"
-        return f"{f:.{nd}f}"
-    except Exception:
-        return none
-
-def _fmt_pos_short(coin: str, p: Dict[str, Any]) -> str:
-    side = p.get("side") or "flat"
-    side_c = "L" if side == "long" else ("S" if side == "short" else "-")
-    size = p.get("size") or 0.0
-    upnl = p.get("upnl")
-    try:
-        upnl_s = f"{float(upnl):+.3f}" if upnl is not None else "+0.000"
-    except Exception:
-        upnl_s = "+0.000"
-    return f"{coin} {side_c}{size:g}({upnl_s})"
-
-def _parse_perp_arg(perp_arg: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-    """
-    perp_arg가 'xyz:XYZ100' 형태면 dex를 추출(lower), 심볼은 'xyz:XYZ100'로 유지.
-    반환: (resolved_perp_symbol, resolved_dex)
-    """
-    if not perp_arg:
-        return None, None
-    s = perp_arg.strip()
-    if ":" in s:
-        dex_from_perp, coin = s.split(":", 1)
-        dex_final = dex_from_perp.strip().lower()
-        perp_final = f"{dex_final}:{coin.strip().upper()}"
-        return perp_final, dex_final
-    else:
-        return s.upper(), None
-
-async def _wait_for_price(client: HLWSClientRaw, symbol: str, is_spot_pair: bool = False, base_only: bool = False,
-                          timeout: float = 8.0, poll: float = 0.1) -> Optional[float]:
-    """
-    가격 대기:
-      - is_spot_pair=True       → 'BASE/USDC' 등 페어 가격
-      - base_only=True          → BASE 단가(USDC 쿼트 전제)
-      - 둘 다 False             → Perp/일반 심볼
-    """
-    end = time.time() + timeout
-    symbol_u = symbol.upper()
-    while time.time() < end:
-        try:
-            if is_spot_pair:
-                px = client.get_spot_pair_px(symbol_u)
-                if px is not None:
-                    return px
-            elif base_only:
-                px = client.get_spot_px_base(symbol_u)
-                if px is not None:
-                    return px
-            else:
-                px = client.get_price(symbol_u)
-                if px is not None:
-                    return px
-        except Exception:
-            pass
-        await asyncio.sleep(poll)
-    return None
-
-async def _wait_for_webdata3_any(clients: Dict[str, HLWSClientRaw], timeout: float = 10.0, poll: float = 0.2) -> bool:
-    """여러 client 중 하나라도 webData3(DEX별 margin/positions)를 받기까지 대기."""
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            for c in clients.values():
-                if getattr(c, "margin_by_dex", None):
-                    if c.margin_by_dex:
-                        return True
-        except Exception:
-            pass
-        await asyncio.sleep(poll)
-    return False
-
-def _resolve_perp_for_scope(scope: str, input_perp: str) -> str:
-    """
-    입력 perp 심볼(예: 'BTC' 또는 'xyz:XYZ100')을 scope별 쿼리 심볼로 변환.
-    - scope == 'hl' → 'COIN'
-    - scope != 'hl' → 'scope:COIN'
-    """
-    s = input_perp.strip().upper()
-    if ":" in s:
-        _, coin = s.split(":", 1)
-        base = coin.strip().upper()
-    else:
-        base = s
-    return base if scope == "hl" else f"{scope}:{base}"
-
-
-
-async def run_demo(base: str, address: Optional[str],
-                   perp_symbol: Optional[str], spot_symbol: Optional[str],
-                   interval: float, duration: int, log_level: str) -> int:
-
-    # 로깅 설정
-    lvl = getattr(logging, log_level.upper(), logging.INFO)
-    logging.basicConfig(
-        level=lvl,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
-        force=True,
-    )
-    logging.getLogger("websockets").setLevel(logging.WARNING)
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-
-    # --perp 에서 DEX 자동 추출(출력 포맷 보조에만 사용)
-    perp_sym_resolved, dex_resolved = _parse_perp_arg(perp_symbol)
-
-    http_base = base.rstrip("/") if base else DEFAULT_HTTP_BASE
-    ws_host = http_to_wss(http_base)
-
-    # 1) 시작 시 DEX 목록 조회 → scope 리스트 생성
-    #dex_list = HLWSClientRaw.discover_perp_dexs_http(http_base)  # ex: ['xyz','flx','vntl','hyna']
-    scopes = [dex_resolved] if dex_resolved else ["hl"]  # 선택한 스코프만 WS 생성
-
-    # 2) scope별 WS 인스턴스 생성/구독
-    clients: Dict[str, HLWSClientRaw] = {}
-    for sc in scopes:
-        dex_sc = None if sc == "hl" else sc
-        c = HLWSClientRaw(
-            ws_url=ws_host,
-            dex=dex_sc,
-            address=address,   # 주소가 있으면 webData3/spotState 동시 구독
-            coins=[],          # activeAssetData는 생략
-            http_base=http_base
-        )
-        # spot meta 선행
-        await c.ensure_spot_token_map_http()
-        await c.connect()
-        await c.subscribe()
-        clients[sc] = c
-
-    # 종료 시그널
-    stop_event = asyncio.Event()
-    def _on_signal():
-        logging.warning("Signal received; shutting down...")
-        stop_event.set()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _on_signal)
-        except NotImplementedError:
-            pass
-
-    # webData3 준비(주소가 있으면 포지션/마진 출력용)
-    if address:
-        await _wait_for_webdata3_any(clients, timeout=10.0)
-
-    # 최초 워밍업: 질문된 가격(Perp/Spot)을 한번 대기(있으면)
-    async def _warmup():
-        tasks: List[asyncio.Task] = []
-        if perp_sym_resolved:
-            #for sc in scopes:
-            sc = dex_resolved if dex_resolved else "hl"
-            sym_sc = _resolve_perp_for_scope(sc, perp_sym_resolved)
-            tasks.append(asyncio.create_task(_wait_for_price(clients[sc], symbol=sym_sc)))
-        if spot_symbol:
-            s = spot_symbol.strip().upper()
-            #for sc in scopes:
-            sc = "hl"
-            if "/" in s:
-                tasks.append(asyncio.create_task(_wait_for_price(clients[sc], symbol=s, is_spot_pair=True)))
-            else:
-                tasks.append(asyncio.create_task(_wait_for_price(clients[sc], symbol=f"{s}/USDC", is_spot_pair=True)))
-        if tasks:
-            try:
-                await asyncio.wait_for(asyncio.gather(*tasks), timeout=8.0)
-            except Exception:
-                pass
-    await _warmup()
-
-    # 지속 출력 루프
-    t0 = time.time()
-    try:
-        while not stop_event.is_set():
-            # 1) Perp 가격 (DEX별)
-            if perp_sym_resolved:
-                print("Perp Prices by DEX:")
-                #for sc in scopes:
-                #dex_resolved
-                sc = dex_resolved if dex_resolved else 'hl'
-                sym_sc = _resolve_perp_for_scope(sc, perp_sym_resolved)
-                px = clients[sc].get_price(sym_sc)
-                print(f"  [{sc}] {sym_sc}: {_fmt_num(px, 6)}")
-
-            # 2) Spot 가격 (DEX별)
-            if spot_symbol:
-                s_in = spot_symbol.strip().upper()
-                shown_label = s_in if "/" in s_in else f"{s_in}/USDC"
-                print("Spot Prices by DEX:")
-                sc = 'hl'
-                #for sc in scopes:
-                if "/" in s_in:
-                    px = clients[sc].get_spot_pair_px(s_in)
-                else:
-                    px = clients[sc].get_spot_pair_px(f"{s_in}/USDC")
-                    if px is None:
-                        # 대체 쿼트 후보 안내(해당 scope 캐시에서 BASE/ANY)
-                        found = None
-                        try:
-                            for k, v in clients[sc].spot_pair_prices.items():
-                                if k.startswith(f"{s_in}/"):
-                                    found = (k, float(v)); break
-                        except Exception:
-                            pass
-                        if found:
-                            print(f"  [{sc}] {shown_label}: USDC 페어 미발견 → 대체 {found[0]}={_fmt_num(found[1],8)}")
-                            continue
-                print(f"  [{sc}] {shown_label}: {_fmt_num(px, 8)}")
-
-            # 3) webData3: 마진/포지션(주소가 있을 때)
-            if address:
-                total_av = 0.0
-                print("Account Value by DEX:")
-                for sc in scopes:
-                    # 동일 주소로 각 WS가 webData3를 받으므로, 같은 값을 읽게 되지만
-                    # scope별 client에서 get_account_value_by_dex(sc)로 명시적으로 분리
-                    av_sc = clients[sc].get_account_value_by_dex(sc if sc != "hl" else "hl")
-                    total_av += float(av_sc or 0.0)
-                    print(f"  [{sc}] AV={_fmt_num(av_sc,6)}")
-
-                    pos_map = clients[sc].get_positions_by_dex(sc if sc != "hl" else "hl") or {}
-                    if not pos_map:
-                        print("    Positions: -")
-                    else:
-                        items = list(pos_map.items())
-                        show = []
-                        for coin, pos in items[:5]:
-                            show.append(_fmt_pos_short(coin, pos))
-                        if len(items) > 5:
-                            show.append(f"... +{len(items) - 5} more")
-                        print("    " + "; ".join(show))
-                print(f"Total AV (sum): {_fmt_num(total_av, 6)}")
-
-                # 4) Spot 잔고/포트폴리오
-                # (모든 scope가 동일 주소의 spotState를 구독하므로 어느 client에서 읽어도 동일)
-                any_client = next(iter(clients.values()))
-                bals = any_client.get_all_spot_balances()
-                if bals:
-                    # 상위 10개만 간단히 표시
-                    rows = sorted(bals.items(), key=lambda kv: kv[1], reverse=True)[:10]
-                    print("Spot Balances (Top by Amount): " + ", ".join([f"{t}={_fmt_num(a, 8)}" for t, a in rows]))
-                    try:
-                        pv = any_client.get_spot_portfolio_value_usdc()
-                        print(f"Spot Portfolio Value (≈USDC): {_fmt_num(pv, 6)}")
-                    except Exception:
-                        pass
-
-            print()
-            await asyncio.sleep(max(0.3, float(interval)))
-            if duration and (time.time() - t0) >= duration:
-                break
-
-    finally:
-        # 모든 scope client를 정리
-        for c in clients.values():
-            try:
-                await c.close()
-            except Exception:
-                pass
-
-    return 0
-
-# -------------------- CLI --------------------
-
-def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="HL WS Demo - Market & User (no SDK)")
-    p.add_argument("--base", type=str, default=DEFAULT_HTTP_BASE, help="API base URL (https→wss 자동). 기본: https://api.hyperliquid.xyz")
-    p.add_argument("--address", type=str, default=os.environ.get("HL_ADDRESS", ""), help="지갑 주소(0x...). 포지션/마진/스팟 잔고 표시")
-    p.add_argument("--perp", type=str, default=os.environ.get("HL_PERP", ""), help="Perp 심볼 (예: BTC 또는 xyz:XYZ100). 'dex:COIN'이면 dex 자동 추출")
-    p.add_argument("--spot", type=str, default=os.environ.get("HL_SPOT", ""), help="Spot 심볼 (예: UBTC 또는 UBTC/USDC)")
-    p.add_argument("--interval", type=float, default=3.0, help="지속 출력 주기(초)")
-    p.add_argument("--duration", type=int, default=0, help="N초 뒤 종료(0=무한)")
-    p.add_argument("--log", type=str, default=os.environ.get("HL_LOG", "INFO"), help="로그 레벨 (DEBUG/INFO/WARNING/ERROR)")
-    return p.parse_args(argv or sys.argv[1:])
-
-def main() -> int:
-    args = _parse_args()
-    return asyncio.run(run_demo(
-        base=args.base,
-        address=(args.address.strip() or None),
-        perp_symbol=(args.perp.strip() or None),
-        spot_symbol=(args.spot.strip() or None),
-        interval=float(args.interval),
-        duration=int(args.duration),
-        log_level=args.log,
-    ))
-
-if __name__ == "__main__":
-    raise SystemExit(main())

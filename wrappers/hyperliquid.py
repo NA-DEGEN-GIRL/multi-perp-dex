@@ -8,6 +8,7 @@ import asyncio
 
 BASE_URL = "https://api.hyperliquid.xyz"
 BASE_WS = "wss://api.hyperliquid.xyz/ws"
+STABLES = ["USDC","USDT0","USDH"]
 
 class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
     def __init__(self, 
@@ -46,7 +47,10 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
         self.http_base = BASE_URL
         self.ws_base = BASE_WS
         self.spot_index_to_name = None
+        self.spot_name_to_index = None
         self.spot_asset_index_to_pair = None
+        self.spot_asset_pair_to_index = None
+        self.spot_asset_index_to_bq = None
         self.spot_prices = None
         self.dex_list = ["hl"] # default and add
 
@@ -57,7 +61,7 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
         self._ws_owned: bool = self.ws_client is None   # comment: 풀에서 획득하면 True, 외부 주입이면 False
         self._ws_pool_key = None                        # comment: release 시 사용
         
-        self._ws_init_lock = asyncio.Lock()                  # comment: create_ws_client 중복 호출 방지
+        self._ws_init_lock = asyncio.Lock()             # comment: create_ws_client 중복 호출 방지
         self.fetch_by_ws = fetch_by_ws
         #self.signing_method = signing_method
 
@@ -114,8 +118,21 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
                 self.ws_client = None
 
     async def init(self):
-        await self._init_spot_token_map() # for rest api 
-        await self._get_dex_list()
+        await self._init_spot_token_map() # spot meta
+        await self._get_dex_list()        # perpDexs 리스트 (webData3 순서)
+        try:
+            await WS_POOL.prime_shared_meta(
+                dex_order=self.dex_list or ["hl"],
+                idx2name=self.spot_index_to_name or {},
+                name2idx=self.spot_name_to_index or {},
+                pair_by_index=self.spot_asset_index_to_pair or {},
+                bq_by_index=self.spot_asset_index_to_bq or {},
+            )
+        except Exception:
+            pass
+        # reverse id
+        self.spot_asset_pair_to_index = {v: k for k, v in self.spot_asset_index_to_pair.items()}
+        
         if self.fetch_by_ws:
             await self.create_ws_client()
         return self
@@ -126,16 +143,22 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
         headers = {"Content-Type": "application/json"}
         s = self._session()
         async with s.post(url, json=payload, headers=headers) as r:
-            status = r.status
             try:
                 resp = await r.json()
             except aiohttp.ContentTypeError:
                 resp = await r.text()
-        for e in resp:
-            n = (e or{}).get("name")
-            if n:
-                # 이 순서가 webData3의 순서, self.dex_keys in HLWSClientRaw
-                self.dex_list.append(n) 
+        # [CHANGED] 순서 유지 + 중복 제거 + lower 정규화
+        order = ["hl"]  # HL 항상 선두
+        seen = set(["hl"])
+        for e in (resp or []):
+            n = (e or {}).get("name")
+            if not n:
+                continue
+            k = str(n).lower().strip()
+            if k and k not in seen:
+                order.append(k)
+                seen.add(k)
+        self.dex_list = order  # e.g. ['hl','xyz','flx','vntl', ...]
 
     async def _init_spot_token_map(self):
         """
@@ -175,8 +198,10 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
                         name2idx[name] = idx
                     except Exception as ex:
                         pass
+                #print(name,idx)
             self.spot_index_to_name = idx2name
             self.spot_name_to_index = name2idx
+            
             
             # 2) 페어 맵(spotInfo.index -> 'BASE/QUOTE' 및 (BASE, QUOTE))
             pair_by_index: Dict[int, str] = {}
@@ -243,7 +268,8 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
                     ok += 1
                 else:
                     fail += 1
-
+                #print(base_name,quote_name)
+            
             self.spot_asset_index_to_pair = pair_by_index
             self.spot_asset_index_to_bq = bq_by_index
 
@@ -260,19 +286,21 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
             if self.ws_client is not None:
                 return self.ws_client
             
-            # 기본 주소(서브계정 우선)
             address = self.vault_address if self.vault_address else self.wallet_address
-            dex_list = list(set([d.lower() for d in (self.dex_list or ["hl"])]))
-
-            # 풀에서 획득(없으면 생성) → 연결/기본 구독은 풀 측에서 처리
+            # acquire에 메타를 전달(풀 내부에서 최초 1회만 반영)
             client = await WS_POOL.acquire(
                 ws_url=self.ws_base,
                 http_base=self.http_base,
                 address=address,
-                dex=None,  # comment: 우선 기본(HL) allMids
+                dex=None,
+                dex_order=self.dex_list or ["hl"],
+                idx2name=self.spot_index_to_name or {},
+                name2idx=self.spot_name_to_index or {},
+                pair_by_index=self.spot_asset_index_to_pair or {},
+                bq_by_index=self.spot_asset_index_to_bq or {},
             )
-            # 필요한 다른 DEX allMids도 추가 구독
-            for dex in dex_list:
+            # 추가 DEX 구독
+            for dex in (self.dex_list or []):
                 if dex != "hl":
                     await client.ensure_allmids_for(dex)
 
@@ -299,14 +327,80 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
         pass
 
     async def get_mark_price(self,symbol,*,is_spot=False):
+        raw = str(symbol).strip()
+        if "/" in raw:
+            is_spot = True # auto redirect
+
         if self.fetch_by_ws:
             try:
                 return await self.get_mark_price_ws(symbol,is_spot=is_spot)
             except Exception as e:
                 pass
         
-        return None
         # default rest api
+        try:
+            return await self.get_mark_price_rest(symbol,is_spot=is_spot)
+        except Exception as e:
+            pass
+    
+    async def get_mark_price_rest(self,symbol,*,is_spot=False):
+        dex = None
+        if ":" in symbol:
+            dex = symbol.split(":")[0].lower()
+        
+        url = f"{self.http_base}/info"
+        if is_spot:
+            payload = {"type":"spotMetaAndAssetCtxs"}
+
+        else:
+            payload = {"type":"metaAndAssetCtxs"}
+            if dex:
+                payload["dex"] = dex
+        headers = {"Content-Type": "application/json"}
+        
+        s = self._session()
+        async with s.post(url, json=payload, headers=headers) as r:
+            status = r.status
+            try:
+                resp = await r.json()
+            except aiohttp.ContentTypeError:
+                resp = await r.text()
+        universe = resp[0].get("universe")
+        meta = resp[1]
+        
+        price_tmp = []
+        pair_list = []
+        if is_spot:
+            if "/" in symbol:
+                pair_list = [symbol.upper()]
+            else:
+                for stable in STABLES:
+                    pair_list.append(f"{symbol.upper()}/{stable.upper()}")
+            
+            for name in pair_list:
+                spot_idx = self.spot_asset_pair_to_index.get(name)
+                if spot_idx is None:
+                    # UBTC, UETH, ...
+                    spot_idx = self.spot_asset_pair_to_index.get(f"U{name}")
+                
+                try:
+                    price = meta[spot_idx].get('markPx')
+                    return price # USDC, USDT, USDH 순으로 찾아서 먼저 나오는거
+                except:
+                    continue
+
+            return None
+                
+        else:
+            for idx, value in enumerate(universe):
+                if value.get('name').upper() == symbol.upper():
+                    print(idx, value.get('name'), symbol)
+                    price = meta[idx].get('markPx')
+                    return price
+        if price_tmp:
+            print(price_tmp[0][1]) # quote
+            return price_tmp[0][0] # first one
+        return None
     
     async def get_mark_price_ws(self,symbol, *, is_spot=False, timeout: float = 3.0):
         """
@@ -320,20 +414,31 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
             await self.create_ws_client()
 
         raw = str(symbol).strip()
-        if "/" in raw:
-            is_spot = True
+        #if "/" in raw:
+        #    is_spot = True
 
         if is_spot:
-            pair = raw.upper() if "/" in raw else f"{raw.upper()}/USDC"
-            # spot_pair로 명시
-            if hasattr(self.ws_client, "wait_price_ready"):
-                try:
-                    await asyncio.wait_for(
-                        self.ws_client.wait_price_ready(pair, timeout=timeout, kind="spot_pair"),
-                        timeout=timeout
-                    )
-                except Exception:
-                    pass
+            pair_list = []
+            if "/" in raw:
+                pair = raw.upper()
+                pair_list.append(pair)
+            else:
+                # finding stable pairs
+                for stable in STABLES:
+                    pair_list.append(f"{raw.upper()}/{stable.upper()}")
+
+            for pair in pair_list:
+                # spot_pair로 명시
+                if hasattr(self.ws_client, "wait_price_ready"):
+                    try:
+                        await asyncio.wait_for(
+                            self.ws_client.wait_price_ready(pair, timeout=timeout, kind="spot_pair"),
+                            timeout=timeout
+                        )
+                        break
+                    except Exception:
+                        continue
+
             px = self.ws_client.get_spot_pair_px(pair)
             if px is None:
                 raise TimeoutError(f"WS spot price not ready for {pair}")

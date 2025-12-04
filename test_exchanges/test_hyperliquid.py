@@ -4,13 +4,14 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from exchange_factory import create_exchange, symbol_create
 import asyncio
 import time
-from keys.pk_hyperliquid import HYPERLIQUID_KEY
+from keys.pk_hyperliquid import HYPERLIQUID_KEY, HYPERLIQUID_KEY2
 
 # test done
-coin = 'BTC'
+coin = 'ETH'
 symbol = symbol_create('hyperliquid',coin) # only perp atm
 
 async def main():
+    is_spot = False
     HYPERLIQUID_KEY.fetch_by_ws = True
     HYPERLIQUID_KEY.builder_fee_pair["base"] = 10
     HYPERLIQUID_KEY.builder_fee_pair["dex"] = 10 # example
@@ -18,14 +19,22 @@ async def main():
     HYPERLIQUID_KEY.builder_fee_pair["vntl"] = 10 # example
     HYPERLIQUID_KEY.builder_fee_pair["flx"] = 10 # example
 
+
     hyperliquid = await create_exchange('hyperliquid',HYPERLIQUID_KEY)
+
+    HYPERLIQUID_KEY2.fetch_by_ws = False
+    
+    hyperliquid2 = await create_exchange('hyperliquid',HYPERLIQUID_KEY2)
 
     #res = await hyperliquid.init() # login and initialize
     #print(hyperliquid.spot_index_to_name)
     #print(hyperliquid.spot_name_to_index)
-    print(hyperliquid.dex_list)
+    print(hyperliquid2.dex_list)
 
-    price = await hyperliquid.get_mark_price(symbol,is_spot=False)
+    price = await hyperliquid.get_mark_price(symbol,is_spot=is_spot)
+    print(price)
+
+    price = await hyperliquid2.get_mark_price(coin,is_spot=is_spot)
     print(price)
 
     await hyperliquid.close()
