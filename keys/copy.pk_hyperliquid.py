@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-
+from typing import Tuple
 @dataclass
 class HyperliquidKEY:
     wallet_address: str         # required
@@ -9,7 +9,7 @@ class HyperliquidKEY:
     by_agent: bool              # required
     vault_address: str          # optional
     builder_code: str           # optional
-    builder_fee_pair: dict      # optional
+    builder_fee_pair: dict[str, Tuple[int, int] | list[int] | int]      # optional
     fetch_by_ws: bool           # optional
     
 HYPERLIQUID_KEY = HyperliquidKEY(
@@ -20,7 +20,11 @@ HYPERLIQUID_KEY = HyperliquidKEY(
     by_agent = True,
     vault_address = None,
     builder_code = None,
-    builder_fee_pair = None, # {'base':10,'dex':10}, dex없으면 base로 함, dex를 상세하게 'xyz':10 이런형태로 나타내도됨, 기본은 'dex'를 따름
+    builder_fee_pair = None, # { 'base':(10,10), 'dex': (10,10) }, 을 의미 dex없으면 base로 함, dex를 상세하게 'xyz': (10,10) 이런형태로 나타내도됨, 기본은 'dex'를 따름
+    # 표현 방식 예제, (1,2), [1,2], 1
+    # (1,2): 1=limit fee, 2=market fee
+    # [1,2]: 1=limit fee, 2=market fee
+    # 1: 1 = limit fee = market fee
     fetch_by_ws = True
     )
 
@@ -32,6 +36,6 @@ HYPERLIQUID_KEY2 = HyperliquidKEY(
     by_agent = True,
     vault_address = None,
     builder_code = None,
-    builder_fee_pair = None, # {'base':10,'dex':10}, dex없으면 base로 함, dex를 상세하게 'xyz':10 이런형태로 나타내도됨, 기본은 'dex'를 따름
+    builder_fee_pair = None,
     fetch_by_ws = True
     )

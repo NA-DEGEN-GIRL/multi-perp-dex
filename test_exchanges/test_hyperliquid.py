@@ -26,10 +26,10 @@ async def main():
     HYPERLIQUID_KEY2.fetch_by_ws = False # for rest api test
     hyperliquid2 = await create_exchange('hyperliquid',HYPERLIQUID_KEY2)
 
-    price = await hyperliquid.get_mark_price(symbol,is_spot=is_spot)
-    print(price)
-    price = await hyperliquid2.get_mark_price(symbol2,is_spot=is_spot)
-    print(price)
+    price1 = await hyperliquid.get_mark_price(symbol,is_spot=is_spot)
+    print(price1)
+    price2 = await hyperliquid2.get_mark_price(symbol2,is_spot=is_spot)
+    print(price2)
 
     await asyncio.sleep(0.5)
     res = await hyperliquid.get_collateral()
@@ -47,44 +47,70 @@ async def main():
     await asyncio.sleep(0.5)
 
     open_orders = await hyperliquid.get_open_orders(symbol)
-    print(open_orders)
+    if open_orders:
+        print(len(open_orders), open_orders)
+    else:
+        print(open_orders)
     open_orders = await hyperliquid2.get_open_orders(symbol2)
-    print(open_orders)
+    if open_orders:
+        print(len(open_orders), open_orders)
+    else:
+        print(open_orders)
     await asyncio.sleep(0.5)
-
-    await hyperliquid.close()
-    await hyperliquid2.close()
-    return
     
-
     # limit buy
-    l_price = price*0.97
+    l_price = price1*0.97
     res = await hyperliquid.create_order(symbol, 'buy', 0.0002, price=l_price)
     print(res)
     await asyncio.sleep(0.5)
     
     # limit sell
-    h_price = price*1.03
+    h_price = price1*1.03
     res = await hyperliquid.create_order(symbol, 'sell', 0.0002, price=h_price)
     print(res)
     await asyncio.sleep(0.5)
-
     
+    # limit buy
+    l_price = price2*0.97
+    res = await hyperliquid2.create_order(symbol2, 'buy', 0.002, price=l_price)
+    print(res)
+    await asyncio.sleep(0.5)
+    
+    # limit sell
+    h_price = price2*1.03
+    res = await hyperliquid2.create_order(symbol2, 'sell', 0.002, price=h_price)
+    print(res)
+    await asyncio.sleep(0.5)
 
+    # market buy
+    res = await hyperliquid.create_order(symbol, 'buy', 0.0002)
+    print(res)
+    await asyncio.sleep(0.5)
+        
+    # market sell
+    res = await hyperliquid.create_order(symbol, 'sell', 0.0002)
+    print(res)
+    await asyncio.sleep(0.5)
+
+    # market buy
+    res = await hyperliquid2.create_order(symbol2, 'buy', 0.002)
+    print(res)
+    await asyncio.sleep(0.5)
+        
+    # market sell
+    res = await hyperliquid2.create_order(symbol2, 'sell', 0.002)
+    print(res)
+    await asyncio.sleep(0.5)
+
+    await hyperliquid.close()
+    await hyperliquid2.close()
+    return
     # cancel all orders
     res = await hyperliquid.cancel_orders(symbol, open_orders)
     print(res)
     await asyncio.sleep(0.5)
 
-    # market buy
-    res = await hyperliquid.create_order(symbol, 'buy', 0.003)
-    print(res)
-    await asyncio.sleep(0.5)
-        
-    # market sell
-    res = await hyperliquid.create_order(symbol, 'sell', 0.002)
-    print(res)
-    await asyncio.sleep(5.0)
+    
     
     # position close
     res = await hyperliquid.close_position(symbol, position)

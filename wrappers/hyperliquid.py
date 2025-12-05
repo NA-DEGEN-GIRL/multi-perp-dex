@@ -1,11 +1,14 @@
 from multi_perp_dex import MultiPerpDex, MultiPerpDexMixin
 from .hyperliquid_ws_client import HLWSClientRaw, WS_POOL
+from mpdex.utils.common_hyperliquid import parse_hip3_symbol, round_to_tick, format_price, format_size
 import json
 from typing import Dict, Optional, List, Dict, Tuple
 import aiohttp
 from aiohttp import TCPConnector
 import asyncio
 import time
+from eth_account import Account
+from .hl_sign import sign_l1_action as hl_sign_l1_action
 
 BASE_URL = "https://api.hyperliquid.xyz"
 BASE_WS = "wss://api.hyperliquid.xyz/ws"
@@ -23,6 +26,7 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
               builder_fee_pair: dict = None,     # {"base","dex"# optional,"xyz" # optional,"vntl" #optional,"flx" #optional}
               *,
               fetch_by_ws = False, # fetch pos, balance, and price by ws client
+              FrontendMarket = False,
               # ws_client = None, # ws client가 외부에서 생성됐으면 그걸 사용, acquire 알고리즘으로 불필요
               # ws_client의 경우 WS_POOL 하나를 공유
               # signing_method = None, # special case: superstack, tread.fi, 분리?
@@ -55,6 +59,14 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
         self.spot_prices = None
         self.dex_list = ['hl', 'xyz', 'flx', 'vntl', 'hyna'] # default
 
+        self.spot_token_sz_decimals: Dict[str, int] = {}
+        self._perp_meta_inited: bool = False
+        self.perp_metas_raw: Optional[List[dict]] = None
+        # 키 → (asset_id, szDecimals)
+        #  - 메인(HL): 'BTC' (대문자)
+        #  - HIP-3:    'xyz:XYZ100' (원문 그대로)
+        self.perp_asset_map: Dict[str, Tuple[int, int]] = {}
+
         self._http =  None
 
         # WS 관련 내부 상태
@@ -63,6 +75,7 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
         
         self._ws_init_lock = asyncio.Lock()             # comment: create_ws_client 중복 호출 방지
         self.fetch_by_ws = fetch_by_ws
+        self.FrontendMarket = FrontendMarket
         #self.signing_method = signing_method
 
     def _get_builder_code(self, builder_code:str = None):
@@ -92,6 +105,66 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
                     #case 'tread.fi' | 'treadfi':
                     #    return "0x999a4b5f268a8fbf33736feff360d462ad248dbf"
     
+    def _parse_fee_pair(self, raw) -> tuple[int, int]:
+        if raw is None:
+            return (0, 0)
+        
+        if isinstance(raw, (tuple, list)):
+            try:
+                if len(raw) == 1:
+                    v = int(float(raw[0]))
+                    return (v, v)
+                a = int(float(raw[0]))
+                b = int(float(raw[1]))
+                return (a, b)
+            except Exception:
+                return (0, 0)
+        
+        # int 한개만 받는 경우, limit와 market 동일
+        if isinstance(raw, int):
+            return (raw, raw)
+            
+        # string인 경우 "10,20" "10/20" "10|20" 형태
+        # 혹은 단일의 string인 경우 limit=market
+        s = str(raw).replace(",", " ").replace("/", " ").replace("|", " ").strip()
+        toks = [t for t in s.split() if t]
+        if len(toks) == 1:
+            try:
+                v = int(float(toks[0]))
+                return (v, v)
+            except Exception:
+                return (0, 0)
+        try:
+            a = int(float(toks[0]))
+            b = int(float(toks[1]))
+            return (a, b)
+        except Exception:
+            return (0, 0)
+
+    # 빌더 fee 선택: dex별 → "dex"(공통) → "base" 순
+    def _pick_builder_fee_int(self, dex: Optional[str], order_type: str) -> Optional[int]:
+        try:
+            pair_src = None
+            idx = 0 if str(order_type).lower() == "limit" else 1
+            m = self.builder_fee_pair or {}
+            # 1) 개별 DEX(hip3) 키
+            if dex and dex in m:
+                a, b = self._parse_fee_pair(m[dex])
+                pair_src = (a, b)
+            # 2) 공통 DEX 키
+            if pair_src is None and "dex" in m:
+                a, b = self._parse_fee_pair(m["dex"])
+                pair_src = (a, b)
+            # 3) 메인/기본 키
+            if pair_src is None and "base" in m:
+                a, b = self._parse_fee_pair(m["base"])
+                pair_src = (a, b)
+            if pair_src is None:
+                return None
+            return int(pair_src[idx])
+        except Exception:
+            return None
+    
     def _session(self) -> aiohttp.ClientSession:
         if self._http is None or self._http.closed:
             self._http = aiohttp.ClientSession(
@@ -120,6 +193,11 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
     async def init(self):
         await self._init_spot_token_map() # spot meta
         await self._get_dex_list()        # perpDexs 리스트 (webData3 순서)
+
+        try:
+            await self._init_perp_meta_cache()
+        except Exception:
+            pass
         
         try:
             await WS_POOL.prime_shared_meta(
@@ -141,7 +219,157 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
             await self.create_ws_client()
 
         return self
+    
+    async def _init_perp_meta_cache(self, force: bool = False) -> None:
+        """
+        /info {"type":"allPerpMetas"}를 1회 호출해 런타임 캐시를 만든다.
+        - 메인(HL, meta_idx==0):  key='BTC' (대문자), asset_id = local_idx
+        - HIP-3(meta_idx>0):      key='dex:COIN' (원문), asset_id = 100000 + meta_idx*10000 + local_idx
+        """
+        if self._perp_meta_inited and not force:
+            return
 
+        url = f"{self.http_base}/info"
+        payload = {"type": "allPerpMetas"}
+        s = self._session()
+        try:
+            async with s.post(url, json=payload, headers={"Content-Type": "application/json"}) as r:
+                metas = await r.json()
+        except Exception:
+            metas = []
+
+        # 원본 저장
+        self.perp_metas_raw = metas if isinstance(metas, list) else []
+        # 맵 재구축
+        self.perp_asset_map.clear()
+
+        for meta_idx, meta in enumerate(self.perp_metas_raw):
+            uni = (meta or {}).get("universe") or []
+            for local_idx, a in enumerate(uni):
+                if not isinstance(a, dict):
+                    continue
+                name = a.get("name")
+                if not isinstance(name, str) or not name:
+                    continue
+                if a.get("isDelisted", False):
+                    continue
+                try:
+                    szd = int(a.get("szDecimals") or 0)
+                except Exception:
+                    szd = 0
+
+                if meta_idx == 0:
+                    key = name.upper()                 # 메인(HL)
+                    asset_id = int(local_idx)
+                else:
+                    key = name                         # HIP-3: 'dex:COIN'
+                    asset_id = 100000 + meta_idx * 10000 + local_idx
+
+                self.perp_asset_map[key] = (asset_id, szd)
+
+        self._perp_meta_inited = True
+
+    # 캐시 조회로 변경
+    async def _resolve_perp_asset_and_szdec(self, dex: Optional[str], coin_key: str) -> tuple[Optional[int], int]:
+        """
+        캐시에서 Perp asset_id와 szDecimals를 반환.
+        - dex=None(메인):     key = coin_key.upper()
+        - dex='xyz'(HIP-3):   key = coin_key(원문 'xyz:COIN')
+        """
+        if not self._perp_meta_inited:
+            await self._init_perp_meta_cache()
+
+        key = coin_key if dex else coin_key.upper()
+        return self.perp_asset_map.get(key, (None, 0))
+
+    def _sign_hl_action(self, action: dict) -> tuple[int, dict]:
+        if not self.wallet_address or not self.wallet_address.startswith("0x"):
+            raise RuntimeError("wallet_address(0x...)가 필요합니다.")
+        
+        if self.by_agent:
+            if not self.agent_api_private_key:
+                raise RuntimeError("agent_api_private_key가 필요합니다(EOA 서명).")
+            
+        else:
+            if not self.wallet_private_key:
+                raise RuntimeError("wallet_private_key가 필요합니다(EOA 서명).")
+            
+        nonce = int(time.time() * 1000)
+        if self.by_agent:
+            priv = self.agent_api_private_key[2:] if self.agent_api_private_key.startswith("0x") else self.agent_api_private_key
+        else:
+            priv = self.wallet_private_key[2:] if self.wallet_private_key.startswith("0x") else self.wallet_private_key
+            
+        wallet = Account.from_key(bytes.fromhex(priv))
+        is_mainnet = True  # BASE_URL 고정 환경
+        sig = hl_sign_l1_action(wallet, action, self.vault_address, nonce, None, is_mainnet)
+        return nonce, sig
+    
+    def _extract_order_id(self, raw) -> Optional[str]:
+        """
+        - 성공: oid를 찾아 문자열로 반환
+        - 실패(응답 내 error 존재): RuntimeError를 발생시켜 상위에서 처리
+        지원하는 오류 키: 'error', 'reason', 'message'
+        """
+        def _find_oid(node):
+            # 중첩 트리에서 'oid'를 찾아 반환
+            if isinstance(node, dict):
+                if "oid" in node and isinstance(node["oid"], (int, str)):
+                    return node["oid"]
+                for v in node.values():
+                    r = _find_oid(v)
+                    if r is not None:
+                        return r
+            elif isinstance(node, list):
+                for it in node:
+                    r = _find_oid(it)
+                    if r is not None:
+                        return r
+            return None
+
+        def _collect_errors(node, sink: list):
+            # 중첩 트리에서 에러 메시지를 수집
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if k in ("error", "reason", "message") and isinstance(v, str) and v.strip():
+                        sink.append(v.strip())
+                    elif isinstance(v, (dict, list)):
+                        _collect_errors(v, sink)
+            elif isinstance(node, list):
+                for it in node:
+                    _collect_errors(it, sink)
+
+        # 응답 루트 정규화(list/단일 dict 모두)
+        obj = raw[0] if isinstance(raw, list) and raw else raw
+        if not isinstance(obj, dict):
+            return None
+
+        # 표준 경로 추출
+        resp = (obj.get("response") or obj) if isinstance(obj, dict) else {}
+        data = (resp.get("data") or {}) if isinstance(resp, dict) else {}
+
+        # 1) 에러 우선 탐지: statuses 또는 어디든 중첩된 error/reason/message
+        errors: list[str] = []
+        statuses = data.get("statuses") or resp.get("statuses") or obj.get("statuses") or []
+        if statuses:
+            _collect_errors(statuses, errors)
+        # 상위/다른 중첩에만 에러가 존재할 수도 있음 → 전체 트리 스캔 보강
+        if not errors:
+            _collect_errors(obj, errors)
+
+        if errors:
+            # 첫 메시지만 사용(원하면 " | ".join(errors)로 합치세요)
+            raise RuntimeError(errors[0])
+
+        # 2) oid 탐색(여러 경로 시도)
+        oid = _find_oid(data)
+        if oid is None:
+            oid = _find_oid(resp)
+        if oid is None:
+            oid = _find_oid(obj)
+
+        return str(oid) if oid is not None else None
+    
     async def _get_dex_list(self):
         url = f"{self.http_base}/info"
         payload = {"type":"perpDexs"}
@@ -190,6 +418,7 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
                 self.spot_name_to_index = {}
                 self.spot_asset_index_to_pair = {}
                 self.spot_asset_index_to_bq = {}
+                self.spot_token_sz_decimals = {}
                 return
         
         # 안전 가드: dict 응답인지 확인
@@ -198,6 +427,7 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
             self.spot_name_to_index = {}
             self.spot_asset_index_to_pair = {}
             self.spot_asset_index_to_bq = {}
+            self.spot_token_sz_decimals = {}
             return
         
         tokens = (resp or {}).get("tokens") or []
@@ -206,21 +436,24 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
         # 1) 토큰 맵(spotMeta.tokens[].index -> name)
         idx2name: Dict[int, str] = {}
         name2idx: Dict[str, int] = {}
+        token_szdec: Dict[str, int] = {}
         for t in tokens:
             if isinstance(t, dict) and "index" in t and "name" in t:
                 try:
                     idx = int(t["index"])
                     name = str(t["name"]).upper().strip()
+                    szd = int(t.get("szDecimals") or 0)
                     if not name:
                         continue
                     idx2name[idx] = name
                     name2idx[name] = idx
+                    token_szdec[name] = szd
                 except Exception as ex:
                     pass
             #print(name,idx)
         self.spot_index_to_name = idx2name
         self.spot_name_to_index = name2idx
-        
+        self.spot_token_sz_decimals = token_szdec        
         
         # 2) 페어 맵(spotInfo.index -> 'BASE/QUOTE' 및 (BASE, QUOTE))
         pair_by_index: Dict[int, str] = {}
@@ -292,6 +525,28 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
         self.spot_asset_index_to_pair = pair_by_index
         self.spot_asset_index_to_bq = bq_by_index
 
+    def _spot_base_sz_decimals(self, pair: str) -> int:
+        """
+        pair: 'BASE/QUOTE'
+        return: BASE 토큰의 szDecimals (없으면 0)
+        """
+        if not self.spot_asset_pair_to_index or not self.spot_asset_index_to_bq:
+            return 0
+        pair_u = str(pair).upper()
+        idx = self.spot_asset_pair_to_index.get(pair_u)
+        if idx is None:
+            return 0
+        bq = self.spot_asset_index_to_bq.get(idx)
+        if not bq:
+            return 0
+        base = (bq[0] or "").upper()
+        return int((self.spot_token_sz_decimals or {}).get(base, 0))
+    
+    def _spot_price_tick_decimals(self, pair: str) -> int:
+        base_sz = self._spot_base_sz_decimals(pair)
+        tick = 6 - int(base_sz)
+        return tick if tick > 0 else 0
+
     async def create_ws_client(self):
         """
         WS 커넥션을 '1회 연결 + 다중 구독'으로 운용.
@@ -324,8 +579,171 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
             self._ws_pool_key = (self.ws_base, (address or "").lower())
             return self.ws_client
 
-    async def create_order(self, symbol, side, amount, price=None, order_type='market'):
-        pass
+    async def create_order(
+        self,
+        symbol,
+        side,
+        amount,
+        price=None,
+        order_type='market',
+        *,
+        is_spot: bool = False,
+        reduce_only: bool = False,
+        tif: Optional[str] = None,
+        client_id: Optional[str] = None,
+        slippage: Optional[float] = 0.05
+    ):
+        """
+        HL REST 주문(Perp/Spot 겸용).
+        - price=None → 시장가(FrontendMarket), price 지정 → 지정가(Gtc 기본)
+        - HIP-3(dex:COIN) 자동 처리, Spot 주문 지원
+        반환: {"id": "<oid>", "info": <원문응답>}
+        """
+        # 0) 공통
+        is_buy = str(side).lower() == "buy"
+        raw = str(symbol).strip()
+
+        # 1) Spot 여부 판단
+        if is_spot or ("/" in raw):
+            pair = raw.upper() if "/" in raw else raw.upper()
+            if self.spot_asset_pair_to_index is None:
+                raise RuntimeError("spot meta not initialized")
+            pair_idx = self.spot_asset_pair_to_index.get(pair)
+            if pair_idx is None:
+                raise RuntimeError(f"unknown spot pair: {pair}")
+            asset_id = 10000 + int(pair_idx)
+
+            # BASE szDecimals, tickDecimals
+            base_sz_dec = self._spot_base_sz_decimals(pair)               # 수량 자릿수
+            tick_decimals = self._spot_price_tick_decimals(pair)               # 가격 틱 자릿수
+
+            if price is None:
+                ord_type = "market"
+                tif_final = "FrontendMarket" if self.FrontendMarket else (tif or "Gtc")
+                base_px = await self.get_mark_price(pair, is_spot=True)
+                if base_px is None:
+                    price_str = "0"
+                else:
+                    eff = float(base_px) * (1.0 + slippage) if is_buy else float(base_px) * (1.0 - slippage)
+                    d_tick = round_to_tick(eff, tick_decimals, up=is_buy)
+                    price_str = format_price(float(d_tick), tick_decimals)
+                    if not price_str:
+                        price_str = "0"
+            else:
+                ord_type = "limit"
+                tif_final = (tif or "Gtc")
+                # 틱에 맞춰 BUY: 올림, SELL: 내림
+                d_tick = round_to_tick(float(price), tick_decimals, up=is_buy)
+                price_str = format_price(float(d_tick), tick_decimals)
+
+            # 수량 포맷: BASE szDecimals 기준
+            size_str = format_size(float(amount), int(base_sz_dec))
+
+            order_obj = {
+                "a": int(asset_id),
+                "b": bool(is_buy),
+                "p": price_str,
+                "s": size_str,
+                "r": bool(reduce_only),
+                "t": {"limit": {"tif": tif_final}},
+            }
+            if client_id:
+                order_obj["c"] = str(client_id)
+
+            action_type = "order" # same as perp
+
+            # 빌더
+            if self.builder_code:
+                fee_int = self._pick_builder_fee_int(None, ord_type)   # spot은 공통/기본 룰
+                builder_payload = {"b": str(self.builder_code).lower()}
+                if isinstance(fee_int, int):
+                    builder_payload["f"] = int(fee_int)
+                action = {"type": action_type, "orders": [order_obj], "grouping": "na", "builder": builder_payload}
+            else:
+                action = {"type": action_type, "orders": [order_obj], "grouping": "na"}
+
+            
+            # 서명/전송
+            nonce, sig = self._sign_hl_action(action)
+            payload = {"action": action, "nonce": nonce, "signature": sig}
+            if self.vault_address:
+                payload["vaultAddress"] = self.vault_address
+
+            #print('debug',order_obj,payload)
+            url = f"{self.http_base}/exchange"
+            s = self._session()
+            
+            async with s.post(url, json=payload, headers={"Content-Type": "application/json"}) as r:
+                r.raise_for_status()
+                resp = await r.json()
+            try:
+                return self._extract_order_id(resp) # only id
+            except Exception as e:
+                return str(e)
+
+        # ---------- Perp 주문 ----------
+        dex, coin_key = parse_hip3_symbol(raw)
+        asset_id, sz_dec = await self._resolve_perp_asset_and_szdec(dex, coin_key)
+        if asset_id is None:
+            raise RuntimeError(f"asset index not found for {raw}")
+
+        tick_decimals = max(0, 6 - int(sz_dec))
+        if price is None:
+            ord_type = "market"
+            tif_final = "FrontendMarket" if self.FrontendMarket else (tif or "Gtc")
+            base_px = await self.get_mark_price(coin_key, is_spot=False)
+            if base_px is None:
+                price_str = "0"
+            else:
+                eff = float(base_px) * (1.0 + slippage) if is_buy else float(base_px) * (1.0 - slippage)
+                d_tick = round_to_tick(eff, tick_decimals, up=is_buy)
+                price_str = format_price(float(d_tick), tick_decimals)
+                if not price_str:
+                    price_str = "0"
+        else:
+            ord_type = "limit"
+            tif_final = (tif or "Gtc")
+            d_tick = round_to_tick(float(price), tick_decimals, up=is_buy)
+            price_str = format_price(float(d_tick), tick_decimals)
+
+        size_str = format_size(float(amount), int(sz_dec))
+        
+        order_obj = {
+            "a": int(asset_id),
+            "b": bool(is_buy),
+            "p": price_str,
+            "s": size_str,
+            "r": bool(reduce_only),
+            "t": {"limit": {"tif": tif_final}},
+        }
+        if client_id:
+            order_obj["c"] = str(client_id)
+
+        action = {"type": "order", "orders": [order_obj], "grouping": "na"}
+
+        if self.builder_code:
+            fee_int = self._pick_builder_fee_int(dex, ord_type)
+            builder_payload = {"b": str(self.builder_code).lower()}
+            if isinstance(fee_int, int):
+                builder_payload["f"] = int(fee_int)
+            action["builder"] = builder_payload
+        
+        nonce, sig = self._sign_hl_action(action)
+        payload = {"action": action, "nonce": nonce, "signature": sig}
+        if self.vault_address:
+            payload["vaultAddress"] = self.vault_address
+
+        #print('debug',order_obj,payload)
+        url = f"{self.http_base}/exchange"
+        s = self._session()
+        
+        async with s.post(url, json=payload, headers={"Content-Type": "application/json"}) as r:
+            r.raise_for_status()
+            resp = await r.json()
+        try:
+            return self._extract_order_id(resp) # only id
+        except Exception as e:
+            return str(e)
 
     # 포지션 파싱 공통 헬퍼
     def _parse_position_core(self, pos: dict) -> dict:
@@ -456,7 +874,7 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
         return None
     
     async def close_position(self, symbol, position):
-        pass
+        return await super().close_position(symbol, position)
     
     async def get_collateral(self):
         if self.fetch_by_ws:
