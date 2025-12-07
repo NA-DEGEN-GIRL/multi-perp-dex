@@ -11,6 +11,7 @@ class HyperliquidKEY:
     builder_code: str           # optional
     builder_fee_pair: dict[str, Tuple[int, int] | list[int] | int]      # optional
     fetch_by_ws: bool           # optional
+    FrontendMarket: bool
     
 HYPERLIQUID_KEY = HyperliquidKEY(
     wallet_address = None,
@@ -25,7 +26,8 @@ HYPERLIQUID_KEY = HyperliquidKEY(
     # (1,2): 1=limit fee, 2=market fee
     # [1,2]: 1=limit fee, 2=market fee
     # 1: 1 = limit fee = market fee
-    fetch_by_ws = True
+    fetch_by_ws = True,
+    FrontendMarket = False
     )
 
 HYPERLIQUID_KEY2 = HyperliquidKEY(
@@ -37,5 +39,6 @@ HYPERLIQUID_KEY2 = HyperliquidKEY(
     vault_address = None,
     builder_code = None,
     builder_fee_pair = None,
-    fetch_by_ws = True
+    fetch_by_ws = True,
+    FrontendMarket = False
     )

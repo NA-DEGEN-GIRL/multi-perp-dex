@@ -10,7 +10,8 @@ def _load(exchange_platform: str):  # [ADDED] 필요한 경우에만 모듈 로�
         "treadfi.hyperliquid": ("wrappers.treadfi_hl", "TreadfiHlExchange"),
         "variational": ("wrappers.variational", "VariationalExchange"),
         "pacifica": ("wrappers.pacifica", "PacificaExchange"),
-        "hyperliquid": ("wrappers.hyperliquid","HyperliquidExchange")
+        "hyperliquid": ("wrappers.hyperliquid","HyperliquidExchange"),
+        "superstack": ("wrappers.superstack","SuperstackExchange"),
     }
     try:
         mod, cls = mapping[exchange_platform]
@@ -50,6 +51,16 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
             builder_code = key_params.builder_code,
             builder_fee_pair = key_params.builder_fee_pair,
             fetch_by_ws = key_params.fetch_by_ws,
+            FrontendMarket = key_params.FrontendMarket
+        ).init()
+    elif exchange_platform == "superstack":
+        return await Ex(
+            wallet_address = key_params.wallet_address,
+            api_key = key_params.api_key,
+            vault_address = key_params.vault_address,
+            builder_fee_pair = key_params.builder_fee_pair,
+            fetch_by_ws = key_params.fetch_by_ws,
+            FrontendMarket = key_params.FrontendMarket
         ).init()
     else:
         raise ValueError(f"Unsupported exchange: {exchange_platform}")
@@ -64,6 +75,7 @@ SYMBOL_FORMATS = {
     "variational": lambda coin: coin.upper(), # same
     "pacifica": lambda coin: coin.upper(), # same
     "hyperliquid": lambda coin: coin.upper(), # use internal mapping
+    "superstack": lambda coin: coin.upper(), # use internal mapping
 }
 
 def symbol_create(exchange_platform: str, coin: str):

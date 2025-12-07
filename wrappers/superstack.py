@@ -20,14 +20,16 @@ DEFAULT_HEADERS = {
 async def get_superstack_payload(
     api_key: str,
     action: Dict[str, Any],
+    vault_address: str,
     base_url: str = DEFAULT_BASE_URL,
 ) -> Dict[str, Any]:
     async with aiohttp.ClientSession(headers=DEFAULT_HEADERS) as session:
-        return await _perform_payload_request(api_key, action, base_url, session)
+        return await _perform_payload_request(api_key, action, vault_address, base_url, session)
 
 async def _perform_payload_request(
     api_key: str,
     action: Dict[str, Any],
+    vault_address: str,
     base_url: str,
     session: aiohttp.ClientSession
 ) -> Dict[str, Any]:
@@ -38,6 +40,8 @@ async def _perform_payload_request(
         "Content-Type": "application/json"
     }
     req = {"action": action}
+    if vault_address:
+        req["vaultAddress"] = vault_address
 
     async with session.post(url, headers=headers, json=req) as response:
         await _raise_if_bad_response(response)
@@ -75,6 +79,7 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
     def __init__(self, 
               wallet_address = None,        # required
               api_key = None,               # required
+              vault_address = None,         # optional, sub-account address
               #builder_code = None, 하드코딩
               builder_fee_pair: dict = None,     # {"base","dex"# optional,"xyz" # optional,"vntl" #optional,"flx" #optional}
               *,
@@ -85,6 +90,7 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
 
         self.wallet_address = wallet_address
         self.api_key = api_key
+        self.vault_address = vault_address
 
         self.builder_code = "0xcdb943570bcb48a6f1d3228d0175598fea19e87b"
         self.builder_fee_pair = builder_fee_pair
@@ -312,28 +318,7 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
             raise RuntimeError(f"asset index not found for {raw}")
         return int(asset_id)
 
-    def _sign_hl_action(self, action: dict) -> tuple[int, dict]:
-        if not self.wallet_address or not self.wallet_address.startswith("0x"):
-            raise RuntimeError("wallet_address(0x...)가 필요합니다.")
-        
-        if self.by_agent:
-            if not self.agent_api_private_key:
-                raise RuntimeError("agent_api_private_key가 필요합니다(EOA 서명).")
-            
-        else:
-            if not self.wallet_private_key:
-                raise RuntimeError("wallet_private_key가 필요합니다(EOA 서명).")
-            
-        nonce = int(time.time() * 1000)
-        if self.by_agent:
-            priv = self.agent_api_private_key[2:] if self.agent_api_private_key.startswith("0x") else self.agent_api_private_key
-        else:
-            priv = self.wallet_private_key[2:] if self.wallet_private_key.startswith("0x") else self.wallet_private_key
-            
-        wallet = Account.from_key(bytes.fromhex(priv))
-        is_mainnet = True  # BASE_URL 고정 환경
-        sig = hl_sign_l1_action(wallet, action, self.vault_address, nonce, None, is_mainnet)
-        return nonce, sig
+    
     
     def _extract_order_id(self, raw) -> Optional[str]:
         """
@@ -632,7 +617,7 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
         # 0) 공통
         is_buy = str(side).lower() == "buy"
         raw = str(symbol).strip()
-
+        
         # 1) Spot 여부 판단
         if is_spot or ("/" in raw):
             pair = raw.upper() if "/" in raw else raw.upper()
@@ -694,11 +679,12 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
 
             
             # 서명/전송
-            nonce, sig = self._sign_hl_action(action)
-            payload = {"action": action, "nonce": nonce, "signature": sig}
+            #nonce, sig = self._sign_hl_action(action)
+            #payload = {"action": action, "nonce": nonce, "signature": sig}
+            payload = await get_superstack_payload(api_key=self.api_key, action=action, vault_address=self.vault_address)
             if self.vault_address:
                 payload["vaultAddress"] = self.vault_address
-
+            
             #print('debug',order_obj,payload)
             url = f"{self.http_base}/exchange"
             s = self._session()
@@ -758,8 +744,9 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
                 builder_payload["f"] = int(fee_int)
             action["builder"] = builder_payload
         
-        nonce, sig = self._sign_hl_action(action)
-        payload = {"action": action, "nonce": nonce, "signature": sig}
+        #nonce, sig = self._sign_hl_action(action)
+        #payload = {"action": action, "nonce": nonce, "signature": sig}
+        payload = await get_superstack_payload(api_key=self.api_key, action=action, vault_address=self.vault_address)
         if self.vault_address:
             payload["vaultAddress"] = self.vault_address
 
@@ -1264,8 +1251,9 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
             cancels = [{"a": int(asset_id), "o": int(order_id)}]
             action = {"type": "cancel", "cancels": cancels}
 
-            nonce, sig = self._sign_hl_action(action)
-            payload = {"action": action, "nonce": nonce, "signature": sig}
+            #nonce, sig = self._sign_hl_action(action)
+            #payload = {"action": action, "nonce": nonce, "signature": sig}
+            payload = await get_superstack_payload(api_key=self.api_key, action=action, vault_address=self.vault_address)
             if self.vault_address:
                 payload["vaultAddress"] = self.vault_address
 
@@ -1321,11 +1309,11 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
 
         action = {"type": "cancel", "cancels": cancels}
         try:
-            nonce, sig = self._sign_hl_action(action)
-            payload = {"action": action, "nonce": nonce, "signature": sig}
+            #nonce, sig = self._sign_hl_action(action)
+            #payload = {"action": action, "nonce": nonce, "signature": sig}
+            payload = await get_superstack_payload(api_key=self.api_key, action=action, vault_address=self.vault_address)
             if self.vault_address:
                 payload["vaultAddress"] = self.vault_address
-
             url = f"{self.http_base}/exchange"
             s = self._session()
             async with s.post(url, json=payload, headers={"Content-Type": "application/json"}) as r:

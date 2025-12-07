@@ -18,6 +18,9 @@
 - Hyperliquid (공식 api)
   - price / position 조회: 웹소켓사용, 여러 instance를 만들어도 WS_POOL 공통모듈로 통신
   - 주문: rest api
+- Superstack
+  - hyperliquid 이지만, 주문관련 endpoint는 superstack wallet api로 생성
+  - price / position 조회: Hyperliquid WS_POOL 공통모듈 사용
 
 ---
 

@@ -5,8 +5,10 @@ from exchange_factory import create_exchange, symbol_create
 import asyncio
 import time
 from keys.pk_hyperliquid import HYPERLIQUID_KEY, HYPERLIQUID_KEY2
+from keys.pk_superstack import SUPERSTACK_KEY
 
 # test done except spot order
+# test done superstack perp
 
 coin1 = 'xyz:XYZ100'
 amount1 = 0.002
@@ -17,6 +19,8 @@ amount2 = 0.0002
 symbol2 = symbol_create('hyperliquid',coin2) # only perp atm
 
 #is_spot = False
+
+test_bool = [False, False, True]
 
 async def main():
     
@@ -31,103 +35,163 @@ async def main():
     HYPERLIQUID_KEY2.fetch_by_ws = False # for rest api test
     hyperliquid2 = await create_exchange('hyperliquid',HYPERLIQUID_KEY2)
 
+    # superstack test
+    superstack = await create_exchange('superstack',SUPERSTACK_KEY)
+
     
     price1 = await hyperliquid.get_mark_price(symbol) #,is_spot=is_spot)
     print(price1)
     price2 = await hyperliquid2.get_mark_price(symbol2) #,is_spot=is_spot)
     print(price2)
-    await asyncio.sleep(0.01)
-
+    price2 = await superstack.get_mark_price(symbol2) #,is_spot=is_spot)
+    print(price2)
+    
     await asyncio.sleep(0.5)
     res = await hyperliquid.get_collateral()
     print(res)
     res = await hyperliquid2.get_collateral()
     print(res)
-
-    await asyncio.sleep(0.5)
-    
-    # limit buy
-    l_price = price1*0.97
-    res = await hyperliquid.create_order(symbol, 'buy', amount1, price=l_price)
+    res = await superstack.get_collateral()
     print(res)
-    await asyncio.sleep(0.5)
     
-    # limit sell
-    h_price = price1*1.03
-    res = await hyperliquid.create_order(symbol, 'sell', amount1, price=h_price)
-    print(res)
-    await asyncio.sleep(0.5)
-    
-    # limit buy
-    l_price = price2*0.97
-    res = await hyperliquid2.create_order(symbol2, 'buy', amount2, price=l_price)
-    print(res)
-    await asyncio.sleep(0.5)
-    
-    # limit sell
-    h_price = price2*1.03
-    res = await hyperliquid2.create_order(symbol2, 'sell', amount2, price=h_price)
-    print(res)
     await asyncio.sleep(0.5)
 
-    # market buy
-    res = await hyperliquid.create_order(symbol, 'buy', amount1*1.5)
-    print(res)
-    await asyncio.sleep(0.5)
+    if test_bool[0]:
+        # limit buy
+        l_price = price1*0.97
+        res = await hyperliquid.create_order(symbol, 'buy', amount1, price=l_price)
+        print(res)
+        await asyncio.sleep(0.5)
         
-    # market sell
-    res = await hyperliquid.create_order(symbol, 'sell', amount1)
-    print(res)
-    await asyncio.sleep(0.5)
-
-    # market buy
-    res = await hyperliquid2.create_order(symbol2, 'buy', amount2*1.5)
-    print(res)
-    await asyncio.sleep(0.5)
+        # limit sell
+        h_price = price1*1.03
+        res = await hyperliquid.create_order(symbol, 'sell', amount1, price=h_price)
+        print(res)
+        await asyncio.sleep(0.5)
+    
+    if test_bool[1]:
+        # limit buy
+        l_price = price2*0.97
+        res = await hyperliquid2.create_order(symbol2, 'buy', amount2, price=l_price)
+        print(res)
+        await asyncio.sleep(0.5)
         
-    # market sell
-    res = await hyperliquid2.create_order(symbol2, 'sell', amount2)
-    print(res)
-    await asyncio.sleep(0.5)
+        # limit sell
+        h_price = price2*1.03
+        res = await hyperliquid2.create_order(symbol2, 'sell', amount2, price=h_price)
+        print(res)
+        await asyncio.sleep(0.5)
 
-    open_orders = await hyperliquid.get_open_orders(symbol)
-    if open_orders:
-        print(len(open_orders), open_orders)
-    else:
-        print(open_orders)
-    open_orders2 = await hyperliquid2.get_open_orders(symbol2)
-    if open_orders2:
-        print(len(open_orders2), open_orders2)
-    else:
-        print(open_orders2)
-    await asyncio.sleep(0.5)
+    if test_bool[2]:
+        # limit buy
+        l_price = price2*0.97
+        res = await superstack.create_order(symbol2, 'buy', amount2, price=l_price)
+        print(res)
+        await asyncio.sleep(0.5)
+        
+        # limit sell
+        h_price = price2*1.03
+        res = await superstack.create_order(symbol2, 'sell', amount2, price=h_price)
+        print(res)
+        await asyncio.sleep(0.5)
+    
+    if test_bool[0]:
+        # market buy
+        res = await hyperliquid.create_order(symbol, 'buy', amount1*1.5)
+        print(res)
+        await asyncio.sleep(0.5)
+            
+        # market sell
+        res = await hyperliquid.create_order(symbol, 'sell', amount1)
+        print(res)
+        await asyncio.sleep(0.5)
 
-    # cancel all orders
-    res = await hyperliquid.cancel_orders(symbol, open_orders)
-    print(res)
-    await asyncio.sleep(0.5)
+    if test_bool[1]:
+        # market buy
+        res = await hyperliquid2.create_order(symbol2, 'buy', amount2*1.5)
+        print(res)
+        await asyncio.sleep(0.5)
+            
+        # market sell
+        res = await hyperliquid2.create_order(symbol2, 'sell', amount2)
+        print(res)
+        await asyncio.sleep(0.5)
 
-    res = await hyperliquid2.cancel_orders(symbol2, open_orders2)
-    print(res)
+    if test_bool[2]:
+        # market buy
+        res = await superstack.create_order(symbol2, 'buy', amount2*1.5)
+        print(res)
+        await asyncio.sleep(0.5)
+            
+        # market sell
+        res = await superstack.create_order(symbol2, 'sell', amount2)
+        print(res)
+        await asyncio.sleep(0.5)
+
+    if test_bool[0]:
+        open_orders = await hyperliquid.get_open_orders(symbol)
+        if open_orders:
+            print(len(open_orders), open_orders)
+        else:
+            print(open_orders)
+
+    if test_bool[1]:
+        open_orders2 = await hyperliquid2.get_open_orders(symbol2)
+        if open_orders2:
+            print(len(open_orders2), open_orders2)
+        else:
+            print(open_orders2)
+
+    if test_bool[2]:
+        open_orders3 = await superstack.get_open_orders(symbol2)
+        if open_orders3:
+            print(len(open_orders3), open_orders3)
+        else:
+            print(open_orders3)
+        await asyncio.sleep(0.5)
+
+    if test_bool[0]:
+        # cancel all orders
+        res = await hyperliquid.cancel_orders(symbol, open_orders)
+        print(res)
+        await asyncio.sleep(0.5)
+
+    if test_bool[1]:
+        res = await hyperliquid2.cancel_orders(symbol2, open_orders2)
+        print(res)
+        await asyncio.sleep(0.5)
+    
+    if test_bool[2]:
+        res = await superstack.cancel_orders(symbol2, open_orders3)
+        print(res)
+        await asyncio.sleep(0.5)
+
+    if test_bool[0]:
+        position = await hyperliquid.get_position(symbol)
+        print(position)
+    if test_bool[1]:
+        position2 = await hyperliquid2.get_position(symbol2)
+        print(position2)
+    if test_bool[2]:
+        position3 = await superstack.get_position(symbol2)
+        print(position3)
     await asyncio.sleep(0.5)
     
-    # get position
-    position = await hyperliquid.get_position(symbol)
-    print(position)
-    position2 = await hyperliquid2.get_position(symbol2)
-    print(position2)
-    await asyncio.sleep(0.5)
-    
-    # position close
-    res = await hyperliquid.close_position(symbol, position)
-    print(res)
+    if test_bool[0]:
+        res = await hyperliquid.close_position(symbol, position)
+        print(res)
 
-    # position close
-    res = await hyperliquid2.close_position(symbol2, position2)
-    print(res)
+    if test_bool[1]:
+        res = await hyperliquid2.close_position(symbol2, position2)
+        print(res)
+
+    if test_bool[2]:
+        res = await superstack.close_position(symbol2, position3)
+        print(res)
 
     await hyperliquid.close()
     await hyperliquid2.close()
+    await superstack.close()
     
 if __name__ == "__main__":
     asyncio.run(main())
