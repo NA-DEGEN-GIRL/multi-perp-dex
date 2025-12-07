@@ -58,8 +58,8 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
             wallet_address = key_params.wallet_address,
             api_key = key_params.api_key,
             vault_address = key_params.vault_address,
-            builder_fee_pair = key_params.builder_fee_pair,
             fetch_by_ws = key_params.fetch_by_ws,
+            builder_fee_pair = key_params.builder_fee_pair,
             FrontendMarket = key_params.FrontendMarket
         ).init()
     else:
