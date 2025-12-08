@@ -493,6 +493,13 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
                 return None
         return inst
     
+    async def init(self):
+        res = await self.initialize() # login and initialize
+        if res.get('ok'):
+            return self
+        else:
+            raise RuntimeError(f"init 실패: {res}")
+
     async def initialize(self) -> dict:
         """
         순서:

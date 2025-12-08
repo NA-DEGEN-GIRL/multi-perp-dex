@@ -28,10 +28,10 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         return self._cached_auth_token
     
     # use initialize when using main account
-    async def initialize(self):
-        await self.client.set_account_index()
+    #async def initialize(self):
+    #    await self.client.set_account_index()
 
-    async def initialize_market_info(self):
+    async def init(self):
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{self.url}/api/v1/orderBooks") as resp:
                 data = await resp.json()

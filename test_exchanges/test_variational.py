@@ -12,9 +12,9 @@ symbol = symbol_create('variational',coin) # only perp atm
 async def main():
     variational = await create_exchange('variational',VARIATIONAL_KEY)
 
-    res = await variational.initialize() # login and initialize
-    print(res.get('ok'))
-    await asyncio.sleep(0.5)
+    #res = await variational.initialize() # login and initialize
+    #print(res.get('ok'))
+    #await asyncio.sleep(0.5)
     
     
     coll = await variational.get_collateral()

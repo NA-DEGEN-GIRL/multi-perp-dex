@@ -4,74 +4,60 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from exchange_factory import create_exchange, symbol_create
 import asyncio
 from keys.pk_treadfi_hl import TREADFIHL_KEY
-# login / logout / create_order
+
+# note:
+# tread.fi it self can't close a position of small size
+# they will fix it, so it's not a bug in this code
 
 coin = 'BTC'
+amount = 0.0002
 symbol = symbol_create('treadfi.hyperliquid',coin) # only perp atm
 
 async def main():
     treadfi_hl = await create_exchange('treadfi.hyperliquid',TREADFIHL_KEY)
-
-    # login
-    res = await treadfi_hl.login()
-    print(res)
     
-    # limit buy
-    res = await treadfi_hl.create_order(symbol, 'buy', 0.00015, price=85000)
-    print(res)
-    
-    # logout
-    #res = await treadfi_hl.logout()
-    #print(res)
-
-    await treadfi_hl.close()
-    #print(treadfi_hl)
-    #position = await treadfi_hl.get_position(symbol)
-    #print(position)
-    
-    '''
-    price = await treadfi_hl.get_mark_price(symbol)
+    price = await treadfi_hl.get_mark_price(symbol) #,is_spot=is_spot)
     print(price)
 
-    coll = await treadfi_hl.get_collateral()
-    print(coll)
-    await asyncio.sleep(0.2)
+    res = await treadfi_hl.get_collateral()
+    print(res)
+
+    l_price = price*0.97
+    res = await treadfi_hl.create_order(symbol, 'buy', amount, price=l_price)
+    print(res)
+    await asyncio.sleep(0.5)
     
     # limit sell
-    res = await treadfi_hl.create_order(symbol, 'sell', 0.002, price=86000)
+    h_price = price*1.03
+    res = await treadfi_hl.create_order(symbol, 'sell', amount, price=h_price)
     print(res)
-    await asyncio.sleep(0.2)
-    
-    
-    
-    # get open orders
-    res = await treadfi_hl.get_open_orders(symbol)
-    print(res)
-    
-    # cancel
-    res = await treadfi_hl.cancel_orders(symbol)
-    print(res)
-    await asyncio.sleep(0.2)
-    
+    await asyncio.sleep(0.5)
+
     # market buy
-    res = await treadfi_hl.create_order(symbol, 'buy', 0.003)
+    res = await treadfi_hl.create_order(symbol, 'buy', amount*2)
     print(res)
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.5)
         
     # market sell
-    res = await treadfi_hl.create_order(symbol, 'sell', 0.002)
+    res = await treadfi_hl.create_order(symbol, 'sell', amount)
     print(res)
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(10.0) # front api reflect가 느림
     
-    # get position
     position = await treadfi_hl.get_position(symbol)
     print(position)
-    await asyncio.sleep(0.2)
+
+    res = await treadfi_hl.close_position(symbol, position)
+    print(res)
+
+    open_orders = await treadfi_hl.get_open_orders(symbol)
+    if open_orders:
+        print(len(open_orders),open_orders)
     
-    # position close
-    #res = await treadfi_hl.close_position(symbol, position)
-    #print(res)
-    '''
+    res = await treadfi_hl.cancel_orders(symbol, open_orders)
+    print(res)
+    await asyncio.sleep(0.2)
+
+    await treadfi_hl.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

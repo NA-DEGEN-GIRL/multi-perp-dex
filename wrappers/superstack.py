@@ -119,7 +119,7 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
         self.ws_client: Optional[HLWSClientRaw] = None  # WS_POOL에서
         self._ws_pool_key = None                        # comment: release 시 사용
         
-        self._ws_init_lock = asyncio.Lock()             # comment: create_ws_client 중복 호출 방지
+        #self._ws_init_lock = asyncio.Lock()             # comment: create_ws_client 중복 호출 방지
         self.fetch_by_ws = fetch_by_ws
         self.FrontendMarket = FrontendMarket
 
@@ -234,7 +234,7 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
         }
         
         if self.fetch_by_ws:
-            await self.create_ws_client()
+            await self._create_ws_client()
 
         return self
     
@@ -562,37 +562,37 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
         tick = 6 - int(base_sz)
         return tick if tick > 0 else 0
 
-    async def create_ws_client(self):
+    async def _create_ws_client(self):
         """
         WS 커넥션을 '1회 연결 + 다중 구독'으로 운용.
         - 전역 풀(WS_POOL)에서 (ws_url,address) 키로 하나를 획득하여 공유
         - 인스턴스 내부에서 중복 acquire를 방지
         """
-        async with self._ws_init_lock:
-            if self.ws_client is not None:
-                return self.ws_client
-            
-            address = self.vault_address if self.vault_address else self.wallet_address
-            # acquire에 메타를 전달(풀 내부에서 최초 1회만 반영)
-            client = await WS_POOL.acquire(
-                ws_url=self.ws_base,
-                http_base=self.http_base,
-                address=address,
-                dex=None,
-                dex_order=self.dex_list or ["hl"],
-                idx2name=self.spot_index_to_name or {},
-                name2idx=self.spot_name_to_index or {},
-                pair_by_index=self.spot_asset_index_to_pair or {},
-                bq_by_index=self.spot_asset_index_to_bq or {},
-            )
-            # 추가 DEX 구독
-            for dex in (self.dex_list or []):
-                if dex != "hl":
-                    await client.ensure_allmids_for(dex)
-
-            self.ws_client = client
-            self._ws_pool_key = (self.ws_base, (address or "").lower())
+        #async with self._ws_init_lock:
+        if self.ws_client is not None:
             return self.ws_client
+        
+        address = self.vault_address if self.vault_address else self.wallet_address
+        # acquire에 메타를 전달(풀 내부에서 최초 1회만 반영)
+        client = await WS_POOL.acquire(
+            ws_url=self.ws_base,
+            http_base=self.http_base,
+            address=address,
+            dex=None,
+            dex_order=self.dex_list or ["hl"],
+            idx2name=self.spot_index_to_name or {},
+            name2idx=self.spot_name_to_index or {},
+            pair_by_index=self.spot_asset_index_to_pair or {},
+            bq_by_index=self.spot_asset_index_to_bq or {},
+        )
+        # 추가 DEX 구독
+        for dex in (self.dex_list or []):
+            if dex != "hl":
+                await client.ensure_allmids_for(dex)
+
+        self.ws_client = client
+        self._ws_pool_key = (self.ws_base, (address or "").lower())
+        #return self.ws_client
 
     async def create_order(
         self,
@@ -821,8 +821,8 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
         if not address:
             return None
 
-        if not self.ws_client:
-            await self.create_ws_client()
+        #if not self.ws_client:
+        #    await self.create_ws_client()
 
         # 스냅샷 대기(간단 폴링)
         deadline = time.monotonic() + float(timeout)
@@ -1025,8 +1025,8 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
                 "spot": {"USDH": None, "USDC": None, "USDT": None},
             }
 
-        if not self.ws_client:
-            await self.create_ws_client()
+        #if not self.ws_client:
+        #    await self.create_ws_client()
 
         # 1) webData3/spotState 첫 스냅샷을 짧게 폴링 대기
         deadline = time.monotonic() + float(timeout)
@@ -1121,8 +1121,8 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
         if not address:
             return None
 
-        if not self.ws_client:
-            await self.create_ws_client()
+        #if not self.ws_client:
+        #    await self.create_ws_client()
 
         if hasattr(self.ws_client, "wait_open_orders_ready"):
             ok = await self.ws_client.wait_open_orders_ready(timeout=timeout)
@@ -1428,8 +1428,8 @@ class SuperstackExchange(MultiPerpDexMixin, MultiPerpDex):
         - 첫 틱이 아직 도착하지 않은 경우 wait_price_ready가 있으면 timeout까지 대기
         - 값을 얻지 못하면 예외를 던져 상위(get_mark_price)에서 REST 폴백하게 한다.
         """
-        if not self.ws_client:
-            await self.create_ws_client()
+        #if not self.ws_client:
+        #    await self.create_ws_client()
 
         raw = str(symbol).strip()
         #if "/" in raw:

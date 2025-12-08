@@ -24,22 +24,61 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
     if key_params is None:
         raise ValueError(f"[ERROR] key_params is required for exchange: {exchange_platform}")
     Ex = _load(exchange_platform)  # [ADDED]
+    
     if exchange_platform == "paradex":
-        return Ex(key_params.wallet_address, key_params.paradex_address, key_params.paradex_private_key)
+        return Ex(
+            key_params.wallet_address, 
+            key_params.paradex_address, 
+            key_params.paradex_private_key)
+    
     elif exchange_platform == "edgex":
-        return await Ex(key_params.account_id, key_params.private_key).init()
+        return await Ex(
+            key_params.account_id, 
+            key_params.private_key
+            ).init()
+    
     elif exchange_platform == "grvt":
-        return await Ex(key_params.api_key, key_params.account_id, key_params.secret_key ).init()
+        return await Ex(
+            key_params.api_key, 
+            key_params.account_id, 
+            key_params.secret_key
+            ).init()
+    
     elif exchange_platform == "backpack":
         return Ex(key_params.api_key, key_params.secret_key)
+    
     elif exchange_platform == "lighter":
-        return await Ex(key_params.account_id, key_params.private_key, key_params.api_key_id, key_params.l1_address).initialize_market_info()
+        return await Ex(
+            key_params.account_id, 
+            key_params.private_key, 
+            key_params.api_key_id, 
+            key_params.l1_address
+            ).init()
+    
     elif exchange_platform == "treadfi.hyperliquid":
-        return Ex(key_params.session_cookies, key_params.evm_private_key, key_params.main_wallet_address, key_params.sub_wallet_address, key_params.account_name, key_params.fetch_by_ws)
+        return await Ex(
+            key_params.session_cookies, 
+            key_params.login_wallet_address, 
+            key_params.login_wallet_private_key, 
+            key_params.trading_wallet_address, 
+            key_params.account_name, 
+            key_params.fetch_by_ws
+            ).init()
+    
     elif exchange_platform == "variational":
-        return Ex(key_params.evm_wallet_address, key_params.session_cookies, key_params.evm_private_key)
+        return await Ex(
+            key_params.evm_wallet_address, 
+            key_params.session_cookies, 
+            key_params.evm_private_key
+            ).init()
+    
     elif exchange_platform == "pacifica":
-        return await Ex(key_params.public_key, key_params.agent_public_key, key_params.agent_private_key).init()
+        return await Ex(
+            key_params.public_key, 
+            key_params.agent_public_key, 
+            key_params.agent_private_key
+            ).init()
+    
     elif exchange_platform == "hyperliquid":
         return await Ex(
             wallet_address = key_params.wallet_address,
@@ -53,6 +92,7 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
             fetch_by_ws = key_params.fetch_by_ws,
             FrontendMarket = key_params.FrontendMarket
         ).init()
+    
     elif exchange_platform == "superstack":
         return await Ex(
             wallet_address = key_params.wallet_address,
@@ -62,6 +102,7 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
             builder_fee_pair = key_params.builder_fee_pair,
             FrontendMarket = key_params.FrontendMarket
         ).init()
+    
     else:
         raise ValueError(f"Unsupported exchange: {exchange_platform}")
 
