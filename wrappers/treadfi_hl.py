@@ -83,7 +83,7 @@ class TreadfiHlExchange(MultiPerpDexMixin, MultiPerpDex):
 		#self._ws_init_lock = asyncio.Lock()             # comment: create_ws_client 중복 호출 방지
 		self.fetch_by_ws = fetch_by_ws
 
-		self.options = None # for purpose
+		self.options = options
 
 		self.login_html_path = os.environ.get(
 			"TREADFI_LOGIN_HTML",

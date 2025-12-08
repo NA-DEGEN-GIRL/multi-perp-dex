@@ -20,7 +20,7 @@ symbol2 = symbol_create('hyperliquid',coin2) # only perp atm
 
 #is_spot = False
 
-test_bool = [False, False, False]
+test_bool = [True, True, True]
 
 async def main():
     
@@ -53,7 +53,7 @@ async def main():
     print(res)
     res = await superstack.get_collateral()
     print(res)
-    
+    return
     await asyncio.sleep(0.5)
 
     if test_bool[0]:
