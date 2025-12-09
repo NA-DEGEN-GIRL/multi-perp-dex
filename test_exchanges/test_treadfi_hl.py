@@ -9,7 +9,7 @@ from keys.pk_treadfi_hl import TREADFIHL_KEY
 # tread.fi it self can't close a position of small size
 # they will fix it, so it's not a bug in this code
 
-coin = 'xyz:XYZ100'
+coin = 'vntl:SPACEX'
 amount = 0.002
 symbol = symbol_create('treadfi.hyperliquid',coin) # only perp atm
 
@@ -23,6 +23,10 @@ async def main():
 
     res = await treadfi_hl.get_collateral()
     print(res)
+
+    #quote = treadfi_hl.get_perp_quote(symbol)
+    #print(quote)
+    #return
 
     l_price = price*0.97
     res = await treadfi_hl.create_order(symbol, 'buy', amount, price=l_price)
