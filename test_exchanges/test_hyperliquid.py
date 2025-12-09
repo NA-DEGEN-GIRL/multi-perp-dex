@@ -25,7 +25,7 @@ test_bool = [True, True, True]
 async def main():
     
     HYPERLIQUID_KEY.fetch_by_ws = True
-    HYPERLIQUID_KEY.builder_fee_pair["base"] = 10
+    HYPERLIQUID_KEY.builder_fee_pair["base"] = (25, 25)
     HYPERLIQUID_KEY.builder_fee_pair["dex"] = 10 # example
     HYPERLIQUID_KEY.builder_fee_pair["xyz"] = 10 # example
     HYPERLIQUID_KEY.builder_fee_pair["vntl"] = 10 # example
@@ -67,6 +67,7 @@ async def main():
         res = await hyperliquid.create_order(symbol, 'buy', amount1, price=l_price)
         print(res)
         await asyncio.sleep(0.5)
+        return
         
         # limit sell
         h_price = price1*1.03
