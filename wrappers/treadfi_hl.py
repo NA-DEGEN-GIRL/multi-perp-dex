@@ -841,6 +841,7 @@ alert('Signing/Submit failed: ' + e.message);
 					return pos
 			except Exception:
 				pass
+		
 		return await self.get_position_rest(symbol_ws)
 
 	async def get_position_ws(self, symbol: str, timeout: float = 2.0, dex: str | None = None) -> dict:
@@ -851,32 +852,31 @@ alert('Signing/Submit failed: ' + e.message);
 		address = self.trading_wallet_address
 		if not address:
 			return None
-
-		#if not self.ws_client:
-		#    await self.create_ws_client()
-
-		# 스냅샷 대기(간단 폴링)
-		deadline = time.monotonic() + float(timeout)
+		if not self.ws_client:
+			await self.create_ws_client()
+		deadline = time.monotonic() + timeout
 		while time.monotonic() < deadline:
-			if getattr(self.ws_client, "positions_by_dex_norm", None):
+			if self.ws_client.get_positions_norm_for_user(address):
 				break
 			await asyncio.sleep(0.05)
-
-		sym = str(symbol).strip().upper()
-		# 현재 캐시에 있는 키 기반으로 순회
+		pos_by_dex = self.ws_client.get_positions_norm_for_user(address)
+		sym = str(symbol).upper().strip()
+		# dex 지정시 우선
 		if dex:
-			dex_keys = [str(dex).lower()]
-		else:
-			dex_keys = list(getattr(self.ws_client, "positions_by_dex_norm", {}).keys())
-
-		for dk in dex_keys:
-			pos_map = (self.ws_client.positions_by_dex_norm or {}).get(dk) or {}
-			pos = pos_map.get(sym)
-			if not pos:
-				continue
-			parsed = self._parse_position_core(pos)
-			if parsed["size"] and parsed["side"] != "flat":
-				return parsed
+			pm = pos_by_dex.get(dex.lower(), {})
+			pos = pm.get(sym)
+			if pos:
+				parsed = self._parse_position_core(pos)
+				if parsed["size"] and parsed["side"] != "flat":
+					return parsed
+			return None
+		# 전체 DEX 검색
+		for pm in pos_by_dex.values():
+			pos = pm.get(sym)
+			if pos:
+				parsed = self._parse_position_core(pos)
+				if parsed["size"] and parsed["side"] != "flat":
+					return parsed
 		return None
 	
 	async def get_position_rest(self, symbol: str, dex: str | None = None) -> dict:
@@ -1084,62 +1084,29 @@ alert('Signing/Submit failed: ' + e.message);
 		"""
 		address = self.trading_wallet_address
 		if not address:
-			return {
-				"available_collateral": None,
-				"total_collateral": None,
-				"spot": {"USDH": None, "USDC": None, "USDT": None},
-			}
-
-		#if not self.ws_client:
-		#    await self.create_ws_client()
-
-		# 1) webData3/spotState 첫 스냅샷을 짧게 폴링 대기
-		deadline = time.monotonic() + float(timeout)
+			return {"available_collateral": None, "total_collateral": None, "spot": {"USDH": 0.0, "USDC": 0.0, "USDT": 0.0}}
+		if not self.ws_client:
+			await self.create_ws_client()
+		# 최초 스냅샷 폴링
+		deadline = time.monotonic() + timeout
 		while time.monotonic() < deadline:
-			has_margin = bool(getattr(self.ws_client, "margin_by_dex", {}))
-			has_bal = bool(getattr(self.ws_client, "balances", {}))
-			if has_margin and has_bal:
+			if self.ws_client.get_margin_by_dex_for_user(address):
 				break
 			await asyncio.sleep(0.05)
 
-		# 2) DEX별 합산
-		av_sum = 0.0
-		wd_sum = 0.0
-		try:
-			for d, m in (self.ws_client.margin_by_dex or {}).items():
-				try:
-					av_sum += float((m or {}).get("accountValue") or 0.0)
-				except Exception:
-					pass
-				try:
-					wd_sum += float((m or {}).get("withdrawable") or 0.0)
-				except Exception:
-					pass
-		except Exception:
-			pass
+		margin = self.ws_client.get_margin_by_dex_for_user(address)
+		av_sum = sum((m or {}).get("accountValue", 0.0) for m in margin.values())
+		wd_sum = sum((m or {}).get("withdrawable", 0.0) for m in margin.values())
 
-		total_collateral = av_sum if av_sum != 0.0 else None
-		available_collateral = wd_sum if wd_sum != 0.0 else None
-
-		# 3) 스팟 스테이블 잔고
-		balances = {}
-		try:
-			balances = self.ws_client.get_all_spot_balances()
-		except Exception:
-			balances = dict(getattr(self.ws_client, "balances", {}))
-		
+		balances = self.ws_client.get_balances_by_user(address)
 		spot_usdc = float(balances.get("USDC", 0.0))
 		spot_usdh = float(balances.get("USDH", 0.0))
 		spot_usdt = float(balances.get("USDT0", 0.0))
 
 		return {
-			"available_collateral": available_collateral,
-			"total_collateral": total_collateral,
-			"spot": {
-				"USDH": spot_usdh,
-				"USDC": spot_usdc,
-				"USDT": spot_usdt,
-			},
+			"available_collateral": (wd_sum if wd_sum != 0.0 else None),
+			"total_collateral": (av_sum if av_sum != 0.0 else None),
+			"spot": {"USDH": spot_usdh, "USDC": spot_usdc, "USDT": spot_usdt},
 		}
 	
 	async def get_open_orders(self, symbol):

@@ -139,71 +139,119 @@ class HLWSClientRaw:
     - 자동 재연결/재구독
     - Spot 토큰 인덱스 맵을 REST로 1회 로드하여 '@{index}' 키를 Spot 심볼로 변환
     """
-
     def __init__(self, ws_url: str, dex: Optional[str], address: Optional[str], coins: List[str], http_base: str):
         self.ws_url = ws_url
         self.http_base = (http_base.rstrip("/") or DEFAULT_HTTP_BASE)
-        self.address = address.lower() if address else None
+        
         self.dex = dex.lower() if dex else None
-        self.coins = [c.upper() for c in (coins or [])]
+        self.address = address
 
         self.conn: Optional[websockets.WebSocketClientProtocol] = None
         self._stop = asyncio.Event()
         self._tasks: List[asyncio.Task] = []
 
-        # 최신 스냅샷 캐시
-        self.prices: Dict[str, float] = {}        # Perp 등 일반 심볼: 'BTC' -> 104000.0
-        self.spot_prices: Dict[str, float] = {}         # BASE → px (QUOTE=USDC일 때만)
-        self.spot_pair_prices: Dict[str, float] = {}    # 'BASE/QUOTE' → px
-        self.positions: Dict[str, Dict[str, Any]] = {}
+        # --------- 멀티-유저 캐시(주소 소문자 키) ---------
+        self.active_user: Optional[str] = None
+        self._user_subs: set[str] = set()  # 이미 구독한 user 주소 집합(소문자)
+        self._open_orders_ready_by_user: Dict[str, asyncio.Event] = {}
 
-        # 재연결 시 재구독용
-        self._subscriptions: List[Dict[str, Any]] = []
+        self._user_margin_by_dex: Dict[str, Dict[str, Dict[str, float]]] = {}         # user -> dex -> margin dict
+        self._user_positions_by_dex_norm: Dict[str, Dict[str, Dict[str, Any]]] = {}   # user -> dex -> {coin->norm}
+        self._user_positions_by_dex_raw: Dict[str, Dict[str, List[Dict[str, Any]]]] = {} # user -> dex -> raw list
+        self._user_balances: Dict[str, Dict[str, float]] = {}                         # user -> {token->amt}
+        self._user_open_orders: Dict[str, List[Dict[str, Any]]] = {}                  # user -> list[order]
 
-        # Spot 토큰 인덱스 ↔ 이름 맵
+        # --------- active_user 뷰(기존 코드 호환용) ---------
+        #self.margin_by_dex: Dict[str, Dict[str, float]] = {}
+        #self.positions_by_dex_norm: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        #self.positions_by_dex_raw: Dict[str, List[Dict[str, Any]]] = {}
+        #self.balances: Dict[str, float] = {}
+        #self.open_orders: List[Dict[str, Any]] = []
+
+        # 가격 캐시(전역)
+        self.prices: Dict[str, float] = {}
+        self.spot_prices: Dict[str, float] = {}
+        self.spot_pair_prices: Dict[str, float] = {}
+
+        # Spot 메타(공유로 주입)
         self.spot_index_to_name: Dict[int, str] = {}
         self.spot_name_to_index: Dict[str, int] = {}
-
-        # [추가] Spot '페어 인덱스(spotInfo.index)' → 'BASE/QUOTE' & (BASE, QUOTE)
         self.spot_asset_index_to_pair: Dict[int, str] = {}
         self.spot_asset_index_to_bq: Dict[int, tuple[str, str]] = {}
 
-        # [추가] 보류(펜딩) 큐를 '토큰 인덱스'와 '페어 인덱스'로 분리
-        self._pending_spot_token_mids: Dict[int, float] = {}  # '@{tokenIdx}' 대기분
-        self._pending_spot_pair_mids: Dict[int, float] = {}   # '@{pairIdx}'를 쓴 환경 대비(옵션)
-
-        # 매핑 준비 전 수신된 '@{index}' 가격을 보류
-        self._pending_spot_mids: Dict[int, float] = {}
-
-        # webData3 기반 캐시
-        self.margin: Dict[str, float] = {}                       # {'accountValue': float, 'withdrawable': float, ...}
-        self.perp_meta: Dict[str, Dict[str, Any]] = {}           # coin -> {'szDecimals': int, 'maxLeverage': int|None, 'onlyIsolated': bool}
-        self.asset_ctxs: Dict[str, Dict[str, Any]] = {}          # coin -> assetCtx(dict)
-        self.positions: Dict[str, Dict[str, Any]] = {}           # coin -> position(dict)
-        self.open_orders: List[Dict[str, Any]] = []              # raw list
-        self.balances: Dict[str, float] = {}                          # token -> total
-        #self.spot_pair_ctxs: Dict[str, Dict[str, Any]] = {}      # 'BASE/QUOTE' -> ctx(dict)
-        #self.spot_base_px: Dict[str, float] = {}                 # BASE -> px (QUOTE=USDC일 때)
-        self.collateral_quote: Optional[str] = None              # 예: 'USDC'
-        self.server_time: Optional[int] = None                   # ms
-        self.agent: Dict[str, Any] = {}                          # {'address': .., 'validUntil': ..}
-        self.positions_norm: Dict[str, Dict[str, Any]] = {}  # coin -> normalized position
-        
-        # [추가] webData3 DEX별 캐시/순서
-        self.dex_keys: List[str] = ['hl', 'xyz', 'flx', 'vntl', 'hyna']  # 인덱스→DEX 키 매핑 우선순위
-        self.margin_by_dex: Dict[str, Dict[str, float]] = {}     # dex -> {'accountValue', 'withdrawable', ...}
-        self.positions_by_dex_norm: Dict[str, Dict[str, Dict[str, Any]]] = {}  # dex -> {coin -> norm pos}
-        self.positions_by_dex_raw: Dict[str, List[Dict[str, Any]]] = {}         # dex -> raw assetPositions[*].position 목록
-        self.asset_ctxs_by_dex: Dict[str, List[Dict[str, Any]]] = {}            # dex -> assetCtxs(raw list)
-        self.total_account_value: float = 0.0
-        self._open_orders_ready = asyncio.Event()
-
+        self._subscriptions: List[Dict[str, Any]] = []
         self._send_lock = asyncio.Lock()
-        self._active_subs: set[str] = set()  # 이미 보낸 구독의 키 집합
+        self._active_subs: set[str] = set()
+        self._price_events: Dict[str, asyncio.Event] = {}
 
-        # 이벤트 키 충돌 방지: kind 네임스페이스를 포함한 문자열 키 사용
-        #   예) "perp|BTC", "spot_base|PURR", "spot_pair|PURR/USDC"
-        self._price_events: Dict[str, asyncio.Event] = {}  # comment: {'perp|BTC': Event(), ...}
+    # ---------- 유저 구독/뷰 관리 ----------
+    async def ensure_user_streams(self, address: Optional[str]) -> None:
+        """
+        단일 소켓에서 특정 user 스트림(webData 계열/spotState/openOrders)을 추가 구독.
+        """
+        if not address:
+            return
+        u = address.lower().strip()
+        if not u or u in self._user_subs:
+            return
+        await self._send_subscribe({"type": "allDexsClearinghouseState", "user": u})
+        await self._send_subscribe({"type": "spotState", "user": u})
+        await self._send_subscribe({"type": "openOrders", "user": u, "dex": "ALL_DEXS"})
+        self._user_subs.add(u)
+        self._open_orders_ready_by_user.setdefault(u, asyncio.Event())
+        self._user_margin_by_dex.setdefault(u, {})
+        self._user_positions_by_dex_norm.setdefault(u, {})
+        self._user_positions_by_dex_raw.setdefault(u, {})
+        self._user_balances.setdefault(u, {})
+        self._user_open_orders.setdefault(u, [])
+
+    # ---------------- per-user getter ----------------
+    def get_balances_by_user(self, address: str) -> Dict[str, float]:
+        return dict(self._user_balances.get(address.lower().strip(), {}))
+
+    def get_margin_by_dex_for_user(self, address: str) -> Dict[str, Dict[str, float]]:
+        return dict(self._user_margin_by_dex.get(address.lower().strip(), {}))
+
+    def get_positions_norm_for_user(self, address: str) -> Dict[str, Dict[str, Any]]:
+        return dict(self._user_positions_by_dex_norm.get(address.lower().strip(), {}))
+
+    def get_open_orders_for_user(self, address: str) -> List[Dict[str, Any]]:
+        return list(self._user_open_orders.get(address.lower().strip(), []))
+
+    async def wait_open_orders_ready(self, timeout: float = 2.0, address: Optional[str] = None) -> bool:
+        """
+        해당 주소의 openOrders 첫 스냅샷 대기. address가 없으면 active_user 기준.
+        """
+        u = (address or "").lower().strip()
+        if not u:
+            return False
+        ev = self._open_orders_ready_by_user.get(u)
+        if not ev:
+            return False
+        if ev.is_set():
+            return True
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=timeout)
+            return True
+        except Exception:
+            return False
+        
+    # ---------- 기본 구독(가격)만 유지 ----------
+    def build_subscriptions(self) -> List[Dict[str, Any]]:
+        subs: List[Dict[str, Any]] = []
+        if self.dex:
+            subs.append({"type": "allMids", "dex": self.dex})
+        else:
+            subs.append({"type": "allMids"})
+        # user 스트림은 ensure_user_streams에서 개별 추가
+        return subs
+
+    async def ensure_core_subs(self) -> None:
+        if self.dex:
+            await self._send_subscribe({"type": "allMids", "dex": self.dex})
+        else:
+            await self._send_subscribe({"type": "allMids"})
+        # user 스트림은 외부에서 ensure_user_streams 호출
 
     def _normalize_open_order(self, o: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -945,19 +993,20 @@ class HLWSClientRaw:
         
         if ch == "openOrders":
             data = msg.get("data") or {}
+            u = str(data.get("user") or "").lower().strip()
             orders = data.get("orders") or []
-            normalized: List[Dict[str, Any]] = []
+            normalized = []
             for o in orders:
-                if not isinstance(o, dict):
-                    continue
-                no = self._normalize_open_order(o)
+                no = self._normalize_open_order(o) if isinstance(o, dict) else None
                 if no:
                     normalized.append(no)
-            self.open_orders = normalized
-            if self._open_orders_ready and not self._open_orders_ready.is_set():
-                self._open_orders_ready.set()
+            if u:
+                self._user_open_orders[u] = normalized
+                ev = self._open_orders_ready_by_user.get(u)
+                if ev and not ev.is_set():
+                    ev.set()
             return
-
+        
         if ch == "allMids":
             data = msg.get("data") or {}
             
@@ -1031,23 +1080,71 @@ class HLWSClientRaw:
         # 포지션(코인별)
         elif ch == "spotState":
             # 예시 구조: {'channel':'spotState','data':{'user': '0x...','spotState': {'balances': [...]}}}
-            data_body = msg.get("data") or {}
-            spot = data_body.get("spotState") or {}
-            balances_list = spot.get("balances") or []
-            self._update_spot_balances(balances_list)
-
+            data = msg.get("data") or {}
+            u = str(data.get("user") or "").lower().strip()
+            balances = {}
+            for b in (data.get("spotState") or {}).get("balances", []) or []:
+                if not isinstance(b, dict):
+                    continue
+                try:
+                    name = str(b.get("coin") or b.get("tokenName") or b.get("token") or "").upper()
+                    total = float(b.get("total") or 0.0)
+                    if name:
+                        balances[name] = total
+                except Exception:
+                    continue
+            if u:
+                self._user_balances[u] = balances
             return
         
         # 통합 Perp 계정 상태
         if ch == "allDexsClearinghouseState":
-            data_body = msg.get("data") or {}
-            self._update_from_allDexsClearinghouseState(data_body)  # [ADDED]
+            data = msg.get("data") or {}
+            u = str(data.get("user") or "").lower().strip()
+            ch_states = data.get("clearinghouseStates") or []
+            if not u:
+                return
+            margin_by_dex: Dict[str, Dict[str, float]] = {}
+            positions_norm_by_dex: Dict[str, Dict[str, Any]] = {}
+            positions_raw_by_dex: Dict[str, List[Dict[str, Any]]] = {}
+            for item in ch_states:
+                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                    continue
+                dex_in, chs = item[0], (item[1] or {})
+                dex_key = "hl" if (dex_in is None or str(dex_in).strip() == "") else str(dex_in).lower().strip()
+                ms = chs.get("marginSummary") or {}
+                def fnum(x, default=0.0):
+                    try: return float(x)
+                    except Exception: return default
+                margin_by_dex[dex_key] = {
+                    "accountValue": fnum(ms.get("accountValue")),
+                    "totalNtlPos": fnum(ms.get("totalNtlPos")),
+                    "totalRawUsd": fnum(ms.get("totalRawUsd")),
+                    "totalMarginUsed": fnum(ms.get("totalMarginUsed")),
+                    "crossMaintenanceMarginUsed": fnum(chs.get("crossMaintenanceMarginUsed")),
+                    "withdrawable": fnum(chs.get("withdrawable")),
+                    "time": chs.get("time"),
+                }
+                norm_map, raw_list = {}, []
+                for ap in chs.get("assetPositions") or []:
+                    pos = (ap or {}).get("position") or {}
+                    if not pos: continue
+                    raw_list.append(pos)
+                    coin_raw = str(pos.get("coin") or "")
+                    key_u = coin_raw.upper()
+                    try:
+                        norm = self._normalize_position(pos)
+                        norm_map[key_u] = norm
+                        if ":" in coin_raw:
+                            norm_map[coin_raw] = norm
+                    except Exception:
+                        continue
+                positions_norm_by_dex[dex_key] = norm_map
+                positions_raw_by_dex[dex_key] = raw_list
+            self._user_margin_by_dex[u] = margin_by_dex
+            self._user_positions_by_dex_norm[u] = positions_norm_by_dex
+            self._user_positions_by_dex_raw[u] = positions_raw_by_dex
             return
-        
-        # 유저 스냅샷(잔고 등)
-        #elif ch == "webData3":
-        #    data_body = msg.get("data") or {}
-        #    self._update_from_webData3(data_body)
 
     async def _handle_disconnect(self) -> None:
         await self._safe_close_only()
@@ -1125,10 +1222,10 @@ class HLWSClientPool:
     - address가 None/""이면 '가격 전용' 공유 커넥션으로 취급(유저 스트림 없음).
     """
     def __init__(self) -> None:
-        self._clients: dict[str, HLWSClientRaw] = {}
+        self._clients: dict[str, HLWSClientRaw] = {}   # key: ws_url만 사용
         self._refcnt: dict[str, int] = {}
         self._locks: dict[str, asyncio.Lock] = {}
-        # 공용 메타 저장소(+ 보호용 락)
+
         self._shared_lock = asyncio.Lock()
         self._shared_primed: bool = False
         self._shared_dex_order: List[str] = ["hl"]
@@ -1137,21 +1234,20 @@ class HLWSClientPool:
         self._shared_spot_pair_by_index: Dict[int, str] = {}
         self._shared_spot_bq_by_index: Dict[int, tuple[str, str]] = {}
 
-                
+    def _key(self, ws_url: str) -> str:
+        # 주소를 키에서 제거 → 같은 ws_url은 항상 동일 소켓을 사용
+        return http_to_wss(ws_url)
+    
+    def _get_lock(self, key: str) -> asyncio.Lock:
+        if key not in self._locks:
+            self._locks[key] = asyncio.Lock()
+        return self._locks[key]
+    
     # 초기 1회만 공유 메타를 주입(이미 primed면 무시)
-    async def prime_shared_meta(
-        self,
-        *,
-        dex_order: Optional[List[str]] = None,
-        idx2name: Optional[Dict[int, str]] = None,
-        name2idx: Optional[Dict[str, int]] = None,
-        pair_by_index: Optional[Dict[int, str]] = None,
-        bq_by_index: Optional[Dict[int, Tuple[str, str]]] = None,
-    ) -> None:
+    async def prime_shared_meta(self, *, dex_order=None, idx2name=None, name2idx=None, pair_by_index=None, bq_by_index=None) -> None:
         async with self._shared_lock:
             if self._shared_primed:
                 return
-            # 정규화
             ks, seen = [], set()
             for k in (dex_order or ["hl"]):
                 kk = str(k).lower().strip()
@@ -1162,10 +1258,9 @@ class HLWSClientPool:
             self._shared_spot_name2idx = {str(k).upper(): int(v) for k, v in (name2idx or {}).items()}
             self._shared_spot_pair_by_index = dict(pair_by_index or {})
             self._shared_spot_bq_by_index = dict(bq_by_index or {})
-            self._shared_primed = True  # comment: 이후 호출은 무시
+            self._shared_primed = True
 
     def _apply_shared_to_client_unlocked(self, c: HLWSClientRaw) -> None:
-        # [INTERNAL] _shared_lock 보유 상태에서만 호출
         c.set_dex_order(self._shared_dex_order or ["hl"])
         c.set_spot_meta(
             self._shared_spot_idx2name,
@@ -1174,16 +1269,6 @@ class HLWSClientPool:
             self._shared_spot_bq_by_index,
         )
 
-    def _key(self, ws_url: str, address: Optional[str]) -> str:
-        addr = (address or "").lower().strip()
-        url = http_to_wss(ws_url) if ws_url.startswith("http") else ws_url
-        return f"{url}|{addr}"
-
-    def _get_lock(self, key: str) -> asyncio.Lock:
-        if key not in self._locks:
-            self._locks[key] = asyncio.Lock()
-        return self._locks[key]
-
     async def acquire(
         self,
         *,
@@ -1191,21 +1276,12 @@ class HLWSClientPool:
         http_base: str,
         address: Optional[str],
         dex: Optional[str] = None,
-        # 최초 1회 주입용(선택)
         dex_order: Optional[List[str]] = None,
         idx2name: Optional[Dict[int, str]] = None,
         name2idx: Optional[Dict[str, int]] = None,
         pair_by_index: Optional[Dict[int, str]] = None,
         bq_by_index: Optional[Dict[int, Tuple[str, str]]] = None,
     ) -> HLWSClientRaw:
-        """
-        풀에서 (ws_url,address) 키로 클라이언트를 획득(없으면 생성).
-        생성 시:
-          - spotMeta 선행 로드
-          - connect + 기본 subscribe(webData3/spotState는 address가 있을 때만)
-        이후 요청된 dex의 allMids를 추가 구독.
-        """
-        # per-key 락 전에 공유 스냅샷을 1회 주입 시도(데드락 회피)
         await self.prime_shared_meta(
             dex_order=dex_order,
             idx2name=idx2name,
@@ -1214,16 +1290,15 @@ class HLWSClientPool:
             bq_by_index=bq_by_index,
         )
 
-        key = self._key(ws_url, address)
+        key = self._key(ws_url)
         lock = self._get_lock(key)
         async with lock:
             client = self._clients.get(key)
             if client is None:
-                # [ADDED] 최초 생성: dex=None로 만들어 HL 메인 allMids만 기본 구독
                 client = HLWSClientRaw(
                     ws_url=http_to_wss(ws_url),
-                    dex=None,                      # comment: allMids(기본, HL)만 우선
-                    address=address,
+                    dex=None,
+                    address=None,   # [CHANGED] 단일 소켓이므로 주소 미지정
                     coins=[],
                     http_base=http_base,
                 )
@@ -1233,27 +1308,28 @@ class HLWSClientPool:
                 self._clients[key] = client
                 self._refcnt[key] = 0
 
-            # 참조 카운트 증가
             self._refcnt[key] += 1
 
-        # 락 밖에서 dex allMids 추가 구독(중복 방지 로직 보유)
+        # 가격 스코프 구독(필요 시)
         await client.ensure_allmids_for(dex)
+        # [ADDED] 유저 스트림 구독
+        if address:
+            await client.ensure_user_streams(address)
         return client
 
     async def release(self, *, ws_url: str, address: Optional[str]) -> None:
-        key = self._key(ws_url, address)
+        key = self._key(ws_url)
         lock = self._get_lock(key)
         async with lock:
             if key not in self._clients:
                 return
             self._refcnt[key] = max(0, self._refcnt.get(key, 1) - 1)
             if self._refcnt[key] == 0:
-                client = self._clients.pop(key)
+                c = self._clients.pop(key)
                 self._refcnt.pop(key, None)
                 try:
-                    await client.close()
+                    await c.close()
                 except Exception:
                     pass
-                # 락은 재사용 가능하므로 남겨둠
 
 WS_POOL = HLWSClientPool()

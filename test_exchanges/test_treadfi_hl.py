@@ -9,8 +9,8 @@ from keys.pk_treadfi_hl import TREADFIHL_KEY
 # tread.fi it self can't close a position of small size
 # they will fix it, so it's not a bug in this code
 
-coin = 'hyna:BTC'
-amount = 0.002
+coin = 'BTC'
+amount = 0.0002
 symbol = symbol_create('treadfi.hyperliquid',coin) # only perp atm
 
 async def main():

@@ -432,11 +432,11 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
 			leverage = max_leverage
 		#print("max_leverage:",max_leverage)
 		action = {
-            "type": "updateLeverage",
-            "asset": asset_id,
-            "isCross": (not isolated),
-            "leverage": int(leverage),
-        }
+			"type": "updateLeverage",
+			"asset": asset_id,
+			"isCross": (not isolated),
+			"leverage": int(leverage),
+		}
 		nonce, sig = self._sign_hl_action(action)
 		payload = {"action": action, "nonce": nonce, "signature": sig}
 		if self.vault_address:
@@ -678,32 +678,34 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
 		webData3(WS 캐시)에서 조회. 스냅샷 미도착 시 timeout까지 짧게 대기합니다.
 		dex를 지정하지 않으면 self.dex_list 순서대로 검색합니다.
 		"""
-		address = self.vault_address or self.wallet_address
+		address = (self.vault_address or self.wallet_address or "").lower()
 		if not address:
 			return None
-
-		# 스냅샷 대기(간단 폴링)
-		deadline = time.monotonic() + float(timeout)
+		if not self.ws_client:
+			await self._create_ws_client()
+		deadline = time.monotonic() + timeout
 		while time.monotonic() < deadline:
-			if getattr(self.ws_client, "positions_by_dex_norm", None):
+			if self.ws_client.get_positions_norm_for_user(address):
 				break
 			await asyncio.sleep(0.05)
-
-		sym = str(symbol).strip().upper()
-		# 현재 캐시에 있는 키 기반으로 순회
+		pos_by_dex = self.ws_client.get_positions_norm_for_user(address)
+		sym = str(symbol).upper().strip()
+		# dex 지정시 우선
 		if dex:
-			dex_keys = [str(dex).lower()]
-		else:
-			dex_keys = list(getattr(self.ws_client, "positions_by_dex_norm", {}).keys())
-
-		for dk in dex_keys:
-			pos_map = (self.ws_client.positions_by_dex_norm or {}).get(dk) or {}
-			pos = pos_map.get(sym)
-			if not pos:
-				continue
-			parsed = self._parse_position_core(pos)
-			if parsed["size"] and parsed["side"] != "flat":
-				return parsed
+			pm = pos_by_dex.get(dex.lower(), {})
+			pos = pm.get(sym)
+			if pos:
+				parsed = self._parse_position_core(pos)
+				if parsed["size"] and parsed["side"] != "flat":
+					return parsed
+			return None
+		# 전체 DEX 검색
+		for pm in pos_by_dex.values():
+			pos = pm.get(sym)
+			if pos:
+				parsed = self._parse_position_core(pos)
+				if parsed["size"] and parsed["side"] != "flat":
+					return parsed
 		return None
 	
 	async def get_position_rest(self, symbol: str, dex: str | None = None) -> dict:
@@ -883,7 +885,6 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
 				"spot": {"USDH": None, "USDC": None, "USDT": None},
 			}
 
-
 		# 1) webData3/spotState 첫 스냅샷을 짧게 폴링 대기
 		deadline = time.monotonic() + float(timeout)
 		while time.monotonic() < deadline:
@@ -893,44 +894,19 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
 				break
 			await asyncio.sleep(0.05)
 
-		# 2) DEX별 합산
-		av_sum = 0.0
-		wd_sum = 0.0
-		try:
-			for d, m in (self.ws_client.margin_by_dex or {}).items():
-				try:
-					av_sum += float((m or {}).get("accountValue") or 0.0)
-				except Exception:
-					pass
-				try:
-					wd_sum += float((m or {}).get("withdrawable") or 0.0)
-				except Exception:
-					pass
-		except Exception:
-			pass
+		margin = self.ws_client.get_margin_by_dex_for_user(address)
+		av_sum = sum((m or {}).get("accountValue", 0.0) for m in margin.values())
+		wd_sum = sum((m or {}).get("withdrawable", 0.0) for m in margin.values())
 
-		total_collateral = av_sum if av_sum != 0.0 else None
-		available_collateral = wd_sum if wd_sum != 0.0 else None
-
-		# 3) 스팟 스테이블 잔고
-		balances = {}
-		try:
-			balances = self.ws_client.get_all_spot_balances()
-		except Exception:
-			balances = dict(getattr(self.ws_client, "balances", {}))
-		
+		balances = self.ws_client.get_balances_by_user(address)
 		spot_usdc = float(balances.get("USDC", 0.0))
 		spot_usdh = float(balances.get("USDH", 0.0))
 		spot_usdt = float(balances.get("USDT0", 0.0))
 
 		return {
-			"available_collateral": available_collateral,
-			"total_collateral": total_collateral,
-			"spot": {
-				"USDH": spot_usdh,
-				"USDC": spot_usdc,
-				"USDT": spot_usdt,
-			},
+			"available_collateral": (wd_sum if wd_sum != 0.0 else None),
+			"total_collateral": (av_sum if av_sum != 0.0 else None),
+			"spot": {"USDH": spot_usdh, "USDC": spot_usdc, "USDT": spot_usdt},
 		}
 
 	def _normalize_open_order_rest(self, o: dict) -> Optional[dict]:
@@ -973,30 +949,18 @@ class HyperliquidExchange(MultiPerpDexMixin, MultiPerpDex):
 		- 구독이 없으면 subscribe를 보장하고, 초기 스냅샷을 timeout까지 대기(폴링).
 		- 없으면 None.
 		"""
-		address = self.vault_address or self.wallet_address
+		address = (self.vault_address or self.wallet_address or "").lower()
 		if not address:
 			return None
+		if not self.ws_client:
+			await self.create_ws_client()
 
+		await self.ws_client.ensure_user_streams(address)  # 보장
+		await self.ws_client.wait_open_orders_ready(timeout=timeout, address=address)
 
-		if hasattr(self.ws_client, "wait_open_orders_ready"):
-			ok = await self.ws_client.wait_open_orders_ready(timeout=timeout)
-			if not ok:
-				# 이벤트가 없는 구현/타임아웃이면 폴링으로 후퇴
-				pass
-
-		# 폴링 대기(백업 경로)
-		deadline = time.monotonic() + float(timeout)
-		while time.monotonic() < deadline:
-			lst = getattr(self.ws_client, "open_orders", None)
-			if isinstance(lst, list):
-				break
-			await asyncio.sleep(0.05)
-
-		orders = list(getattr(self.ws_client, "open_orders", []) or [])
-		
+		orders = self.ws_client.get_open_orders_for_user(address)
 		if not orders:
 			return None
-		
 		sym = str(symbol).upper().strip()
 		filtered = [o for o in orders if (o.get("symbol") or "").upper() == sym]
 		return filtered or None

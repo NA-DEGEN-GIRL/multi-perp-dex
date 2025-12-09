@@ -11,16 +11,16 @@ from keys.pk_superstack import SUPERSTACK_KEY
 # test done superstack perp
 
 coin1 = 'BTC'
-amount1 = 0.002
+amount1 = 0.0002
 symbol = symbol_create('hyperliquid',coin1) # only perp atm
 
 coin2 = 'xyz:XYZ100'
-amount2 = 0.0002
+amount2 = 0.002
 symbol2 = symbol_create('hyperliquid',coin2) # only perp atm
 
 #is_spot = False
 
-test_bool = [True, False, False]
+test_bool = [True, True, True]
 
 async def main():
     
@@ -41,7 +41,6 @@ async def main():
     superstack = await create_exchange('superstack',SUPERSTACK_KEY)
     await asyncio.sleep(0.2)
 
-    
     price1 = await hyperliquid.get_mark_price(symbol) #,is_spot=is_spot)
     print(price1)
     price2 = await hyperliquid2.get_mark_price(symbol2) #,is_spot=is_spot)
@@ -49,7 +48,6 @@ async def main():
     price2 = await superstack.get_mark_price(symbol2) #,is_spot=is_spot)
     print(price2)
 
-    await asyncio.sleep(0.5)
     res = await hyperliquid.get_collateral()
     print(res)
     res = await hyperliquid2.get_collateral()
@@ -60,7 +58,7 @@ async def main():
     #print(hyperliquid.get_perp_quote(symbol))
     #print(hyperliquid2.get_perp_quote(symbol2))
     #print(superstack.get_perp_quote(symbol2))
-    #return
+    
     await asyncio.sleep(0.5)
 
     if test_bool[0]:
