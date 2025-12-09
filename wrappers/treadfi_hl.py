@@ -147,8 +147,13 @@ class TreadfiHlExchange(MultiPerpDexMixin, MultiPerpDex):
 
 		return self
 	
-	def get_perp_quote(self, symbol):
-		raw = str(self._symbol_convert_for_ws(symbol)).strip()
+	def get_perp_quote(self, symbol, need_to_convert=False):
+		
+		if need_to_convert:
+			raw = str(self._symbol_convert_for_ws(symbol)).strip()
+		else:
+			raw = str(symbol).strip()
+
 		dex, coin_key = parse_hip3_symbol(raw)
 		_, _, _, _, quote_id = self.perp_asset_map.get(coin_key,{})
 		quote = self.spot_index_to_name.get(quote_id,'USDC')
