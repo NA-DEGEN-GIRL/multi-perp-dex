@@ -64,7 +64,7 @@ async def main():
     print(res)
     res = await superstack.get_collateral()
     print(res)
-    #return
+    return
     #print(hyperliquid.get_perp_quote(symbol))
     #print(hyperliquid2.get_perp_quote(symbol2))
     #print(superstack.get_perp_quote(symbol2))
