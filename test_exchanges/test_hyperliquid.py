@@ -37,7 +37,7 @@ async def main():
         res = await hyperliquid.update_leverage(symbol)
         print(res)
         print(hyperliquid._leverage_updated_to_max)
-        res = await superstack.update_leverage(symbol)
+        res = await superstack.update_leverage(symbol2)
         print(res)
         print(superstack._leverage_updated_to_max)
         await asyncio.sleep(0.01)
@@ -45,11 +45,13 @@ async def main():
         print(price1)
         price2 = await superstack.get_mark_price(symbol2) #,is_spot=is_spot)
         print(price2)
+        return
     #return
     
     HYPERLIQUID_KEY2.fetch_by_ws = True # for rest api test
     hyperliquid2 = await create_exchange('hyperliquid',HYPERLIQUID_KEY2)
     await asyncio.sleep(0.2)
+    
 
     price1 = await hyperliquid.get_mark_price(symbol) #,is_spot=is_spot)
     print(price1)
@@ -64,11 +66,11 @@ async def main():
     print(res)
     res = await superstack.get_collateral()
     print(res)
-    #return
+    
     #print(hyperliquid.get_perp_quote(symbol))
     #print(hyperliquid2.get_perp_quote(symbol2))
     #print(superstack.get_perp_quote(symbol2))
-    
+    #return
     await asyncio.sleep(0.5)
 
     if test_bool[0]:

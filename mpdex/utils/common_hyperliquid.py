@@ -1,10 +1,86 @@
 from typing import Optional,Dict
 from decimal import Decimal, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN
 import aiohttp
+import asyncio
 
 BASE_URL = "https://api.hyperliquid.xyz"
 STABLES = ["USDC","USDT0","USDH","USDE"]
 STABLES_DISPLAY = ["USDC","USDT","USDH","USDE"]
+
+# ============================================================
+# [ADDED] 모듈 레벨 공유 캐시(프로세스 내 1회만 로드)
+# ============================================================
+_HL_SHARED_CACHE = {
+    "inited": False,
+    "dex_list": ["hl"],
+    "spot_index_to_name": {},
+    "spot_name_to_index": {},
+    "spot_asset_index_to_pair": {},
+    "spot_asset_pair_to_index": {},   # reverse
+    "spot_asset_index_to_bq": {},
+    "spot_token_sz_decimals": {},
+    "perp_metas_raw": [],
+    "perp_asset_map": {},             # key -> (asset_id, szDec, maxLev, onlyIsolated, quoteId)
+}
+_HL_INIT_LOCK = asyncio.Lock()
+
+async def init_shared_hl_cache(session: Optional[aiohttp.ClientSession] = None, *, force: bool = False) -> dict:
+    """
+    Hyperliquid 공용 메타(dex_list, spot, perp)를 1회만 로드하여 모듈 캐시에 저장.
+    - 이미 초기화되었으면 즉시 반환(force=True면 강제 재로드).
+    - session이 None이면 내부에서 임시 생성/종료.
+    반환: _HL_SHARED_CACHE dict (참조용)
+    """
+    global _HL_SHARED_CACHE
+
+    async with _HL_INIT_LOCK:
+        if _HL_SHARED_CACHE["inited"] and not force:
+            #print('use cache')
+            return _HL_SHARED_CACHE
+
+        own_session = False
+        if session is None:
+            session = aiohttp.ClientSession()
+            own_session = True
+
+        try:
+            # 1) dex_list
+            _HL_SHARED_CACHE["dex_list"] = await get_dex_list(session) or ["hl"]
+
+            # 2) spot meta
+            await init_spot_token_map(
+                session,
+                _HL_SHARED_CACHE["spot_index_to_name"],
+                _HL_SHARED_CACHE["spot_name_to_index"],
+                _HL_SHARED_CACHE["spot_asset_index_to_pair"],
+                _HL_SHARED_CACHE["spot_asset_index_to_bq"],
+                _HL_SHARED_CACHE["spot_token_sz_decimals"],
+            )
+            # reverse
+            _HL_SHARED_CACHE["spot_asset_pair_to_index"] = {
+                v: k for k, v in _HL_SHARED_CACHE["spot_asset_index_to_pair"].items()
+            }
+
+            # 3) perp meta
+            await init_perp_meta_cache(
+                session,
+                _HL_SHARED_CACHE["perp_metas_raw"],
+                _HL_SHARED_CACHE["perp_asset_map"],
+            )
+
+            _HL_SHARED_CACHE["inited"] = True
+        finally:
+            if own_session:
+                await session.close()
+
+    return _HL_SHARED_CACHE
+
+def get_shared_hl_cache() -> dict:
+    """
+    이미 초기화된 공유 캐시를 반환. 초기화 전이면 빈 기본값.
+    (동기 컨텍스트에서 참조용)
+    """
+    return _HL_SHARED_CACHE
 
 def _strip_decimal_trailing_zeros(s: str) -> str:
     """
