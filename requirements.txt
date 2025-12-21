@@ -137,7 +137,7 @@ jsonalias==0.1.1
     # via solders
 lark==1.2.2
     # via cairo-lang
-lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@aecdec059f92a25510cad341a257b992d95ba7c2
+lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@c9b8de6fd6864ede0fd7fb61d85ffb3614d178c9
     # via -r requirements.in
 marshmallow==3.26.1
     # via

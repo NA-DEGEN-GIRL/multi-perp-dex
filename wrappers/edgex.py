@@ -11,6 +11,7 @@ import asyncio
 
 class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
     def __init__(self,account_id,private_key):
+        super().__init__()
         self.base_url = 'https://pro.edgex.exchange'
         self.account_id = account_id
         self.private_key_hex = private_key.replace("0x", "")
@@ -23,6 +24,9 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
         await self.get_meta_data()
         return self
 
+    def get_perp_quote(self, symbol):
+        return 'USD'
+    
     def round_step_size(self, value: Decimal, step_size: str) -> Decimal:
         step = Decimal(step_size)
         precision = abs(step.as_tuple().exponent)

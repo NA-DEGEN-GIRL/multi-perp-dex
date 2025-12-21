@@ -1,9 +1,86 @@
 from typing import Optional,Dict
 from decimal import Decimal, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN
 import aiohttp
+import asyncio
 
 BASE_URL = "https://api.hyperliquid.xyz"
 STABLES = ["USDC","USDT0","USDH","USDE"]
+STABLES_DISPLAY = ["USDC","USDT","USDH","USDE"]
+
+# ============================================================
+# [ADDED] 모듈 레벨 공유 캐시(프로세스 내 1회만 로드)
+# ============================================================
+_HL_SHARED_CACHE = {
+    "inited": False,
+    "dex_list": ["hl"],
+    "spot_index_to_name": {},
+    "spot_name_to_index": {},
+    "spot_asset_index_to_pair": {},
+    "spot_asset_pair_to_index": {},   # reverse
+    "spot_asset_index_to_bq": {},
+    "spot_token_sz_decimals": {},
+    "perp_metas_raw": [],
+    "perp_asset_map": {},             # key -> (asset_id, szDec, maxLev, onlyIsolated, quoteId)
+}
+_HL_INIT_LOCK = asyncio.Lock()
+
+async def init_shared_hl_cache(session: Optional[aiohttp.ClientSession] = None, *, force: bool = False) -> dict:
+    """
+    Hyperliquid 공용 메타(dex_list, spot, perp)를 1회만 로드하여 모듈 캐시에 저장.
+    - 이미 초기화되었으면 즉시 반환(force=True면 강제 재로드).
+    - session이 None이면 내부에서 임시 생성/종료.
+    반환: _HL_SHARED_CACHE dict (참조용)
+    """
+    global _HL_SHARED_CACHE
+
+    async with _HL_INIT_LOCK:
+        if _HL_SHARED_CACHE["inited"] and not force:
+            #print('use cache')
+            return _HL_SHARED_CACHE
+
+        own_session = False
+        if session is None:
+            session = aiohttp.ClientSession()
+            own_session = True
+
+        try:
+            # 1) dex_list
+            _HL_SHARED_CACHE["dex_list"] = await get_dex_list(session) or ["hl"]
+
+            # 2) spot meta
+            await init_spot_token_map(
+                session,
+                _HL_SHARED_CACHE["spot_index_to_name"],
+                _HL_SHARED_CACHE["spot_name_to_index"],
+                _HL_SHARED_CACHE["spot_asset_index_to_pair"],
+                _HL_SHARED_CACHE["spot_asset_index_to_bq"],
+                _HL_SHARED_CACHE["spot_token_sz_decimals"],
+            )
+            # reverse
+            _HL_SHARED_CACHE["spot_asset_pair_to_index"] = {
+                v: k for k, v in _HL_SHARED_CACHE["spot_asset_index_to_pair"].items()
+            }
+
+            # 3) perp meta
+            await init_perp_meta_cache(
+                session,
+                _HL_SHARED_CACHE["perp_metas_raw"],
+                _HL_SHARED_CACHE["perp_asset_map"],
+            )
+
+            _HL_SHARED_CACHE["inited"] = True
+        finally:
+            if own_session:
+                await session.close()
+
+    return _HL_SHARED_CACHE
+
+def get_shared_hl_cache() -> dict:
+    """
+    이미 초기화된 공유 캐시를 반환. 초기화 전이면 빈 기본값.
+    (동기 컨텍스트에서 참조용)
+    """
+    return _HL_SHARED_CACHE
 
 def _strip_decimal_trailing_zeros(s: str) -> str:
     """
@@ -61,6 +138,84 @@ def format_size(amount: float, sz_dec: int) -> str:
     size_str = format(sz_d, "f")
     # [중요 수정] size도 정수부 0가 잘리지 않도록 소수부가 있을 때만 제거
     return _strip_decimal_trailing_zeros(size_str)
+
+def extract_order_id(raw) -> Optional[str]:
+    """
+    지원 형태(단순화):
+      {'status':'ok','response':{'type':'order','data':{'statuses':[{'resting':{'oid':...}}]}}}
+      {'status':'ok','response':{'type':'order','data':{'statuses':[{'filled': {'oid':...,'avgPx':...}}]}}}
+      {'status':'ok','response':{'type':'order','data':{'statuses':[{'error':'...'}]}}}
+    - 성공 시: oid를 문자열로 반환
+    - 실패 시: RuntimeError(error) 발생
+    - 매칭 불가 시: None
+    """
+    # 루트 정규화(list로 감싸져 올 가능성 방어)
+    obj = raw[0] if isinstance(raw, list) and raw else raw
+    if not isinstance(obj, dict):
+        return None
+
+    # statuses 추출
+    try:
+        statuses = obj["response"]["data"]["statuses"]
+    except Exception:
+        return None
+
+    if not isinstance(statuses, list):
+        return None
+
+    # 우선 에러 검사 → 성공 oid 추출
+    for st in statuses:
+        if isinstance(st, dict) and isinstance(st.get("error"), str) and st["error"].strip():
+            raise RuntimeError(st["error"].strip())
+
+    for st in statuses:
+        if not isinstance(st, dict):
+            continue
+        for key in ("resting", "filled"):
+            node = st.get(key)
+            if isinstance(node, dict) and "oid" in node:
+                return str(node["oid"])
+
+    return None
+
+# cancel 응답 파서: 성공/오류 판정
+def extract_cancel_status(raw) -> bool:
+    """
+    성공 시 True, 오류 메시지 있으면 RuntimeError(error)를 발생시킵니다.
+    """
+    def _collect_errors(node, sink: list):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in ("error", "reason", "message") and isinstance(v, str) and v.strip():
+                    sink.append(v.strip())
+                elif isinstance(v, (dict, list)):
+                    _collect_errors(v, sink)
+        elif isinstance(node, list):
+            for it in node:
+                _collect_errors(it, sink)
+
+    obj = raw[0] if isinstance(raw, list) and raw else raw
+    if not isinstance(obj, dict):
+        raise RuntimeError("invalid cancel response")
+
+    resp = obj.get("response") or obj
+    data = resp.get("data") or {}
+    statuses = data.get("statuses")
+    # 1) 에러 우선 탐지
+    errors = []
+    if statuses is not None:
+        _collect_errors(statuses, errors)
+    if not errors:
+        _collect_errors(obj, errors)
+    if errors:
+        raise RuntimeError(errors[0])
+
+    # 2) 'success' 확인
+    if isinstance(statuses, list) and all((isinstance(x, str) and x.lower() == "success") for x in statuses):
+        return True
+
+    # 상태가 비어있거나 알 수 없는 형식인 경우도 보수적으로 성공 처리하지 않음
+    raise RuntimeError("unknown cancel response")
 
 async def get_dex_list(s: aiohttp.ClientSession):
     url = f"{BASE_URL}/info"

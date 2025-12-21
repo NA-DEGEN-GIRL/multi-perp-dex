@@ -20,6 +20,11 @@ async def main():
     coll = await variational.get_collateral()
     print(coll)
     await asyncio.sleep(0.5)
+
+    position = await variational.get_position(symbol)
+    print(position)
+    await asyncio.sleep(0.5)
+    return
     
     price = await variational.get_mark_price(symbol) # 강제 250ms 단위 fetch가 이루어짐.
     print(price)

@@ -9,6 +9,7 @@ import logging
 
 class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
     def __init__(self, account_id, private_key, api_key_id, l1_address):
+        super().__init__()
         logging.getLogger().setLevel(logging.WARNING)
         self.url = "https://mainnet.zklighter.elliot.ai"
         # self.chain_id = 304 # no need anymore
@@ -26,6 +27,9 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
             self._auth_expiry_ts = int(expiry_sec/60)
             self._cached_auth_token, _ = self.client.create_auth_token_with_expiry(self._auth_expiry_ts)
         return self._cached_auth_token
+    
+    def get_perp_quote(self, symbol):
+        return 'USD'
     
     # use initialize when using main account
     #async def initialize(self):

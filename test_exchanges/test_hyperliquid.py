@@ -11,37 +11,48 @@ from keys.pk_superstack import SUPERSTACK_KEY
 # test done superstack perp
 
 coin1 = 'BTC'
-amount1 = 0.002
+amount1 = 0.0002
 symbol = symbol_create('hyperliquid',coin1) # only perp atm
 
 coin2 = 'xyz:XYZ100'
-amount2 = 0.0002
+amount2 = 0.002
 symbol2 = symbol_create('hyperliquid',coin2) # only perp atm
 
 #is_spot = False
 
-test_bool = [True, False, False]
+test_bool = [True, True, False]
 
 async def main():
     
     HYPERLIQUID_KEY.fetch_by_ws = True
-    HYPERLIQUID_KEY.builder_fee_pair["base"] = 10
-    HYPERLIQUID_KEY.builder_fee_pair["dex"] = 10 # example
-    HYPERLIQUID_KEY.builder_fee_pair["xyz"] = 10 # example
-    HYPERLIQUID_KEY.builder_fee_pair["vntl"] = 10 # example
-    HYPERLIQUID_KEY.builder_fee_pair["flx"] = 10 # example
+    HYPERLIQUID_KEY.builder_fee_pair["base"] = (10, 10)
     hyperliquid = await create_exchange('hyperliquid',HYPERLIQUID_KEY)
     await asyncio.sleep(0.2)
+    
+    # superstack test
+    superstack = await create_exchange('superstack',SUPERSTACK_KEY)
+    await asyncio.sleep(0.2)
+    
+    while False:
+        res = await hyperliquid.update_leverage(symbol)
+        print(res)
+        print(hyperliquid._leverage_updated_to_max)
+        res = await superstack.update_leverage(symbol2)
+        print(res)
+        print(superstack._leverage_updated_to_max)
+        await asyncio.sleep(0.01)
+        price1 = await hyperliquid.get_mark_price(symbol) #,is_spot=is_spot)
+        print(price1)
+        price2 = await superstack.get_mark_price(symbol2) #,is_spot=is_spot)
+        print(price2)
+        return
+    #return
     
     HYPERLIQUID_KEY2.fetch_by_ws = True # for rest api test
     hyperliquid2 = await create_exchange('hyperliquid',HYPERLIQUID_KEY2)
     await asyncio.sleep(0.2)
-
-    # superstack test
-    superstack = await create_exchange('superstack',SUPERSTACK_KEY)
-    await asyncio.sleep(0.2)
-
     
+
     price1 = await hyperliquid.get_mark_price(symbol) #,is_spot=is_spot)
     print(price1)
     price2 = await hyperliquid2.get_mark_price(symbol2) #,is_spot=is_spot)
@@ -49,14 +60,13 @@ async def main():
     price2 = await superstack.get_mark_price(symbol2) #,is_spot=is_spot)
     print(price2)
 
-    await asyncio.sleep(0.5)
     res = await hyperliquid.get_collateral()
     print(res)
     res = await hyperliquid2.get_collateral()
     print(res)
     res = await superstack.get_collateral()
     print(res)
-
+    
     #print(hyperliquid.get_perp_quote(symbol))
     #print(hyperliquid2.get_perp_quote(symbol2))
     #print(superstack.get_perp_quote(symbol2))

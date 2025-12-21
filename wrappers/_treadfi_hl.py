@@ -1,32 +1,90 @@
-from mpdex.utils.hyperliquid_base import HyperliquidBase
+from multi_perp_dex import MultiPerpDex, MultiPerpDexMixin
+from mpdex.utils.common_hyperliquid import (
+	parse_hip3_symbol,
+	#init_spot_token_map,
+	#get_dex_list,
+	#init_perp_meta_cache,
+	init_shared_hl_cache,
+	get_shared_hl_cache,
+	STABLES,
+	STABLES_DISPLAY
+)
+from .hyperliquid_ws_client import HLWSClientRaw, WS_POOL
 import aiohttp
-from aiohttp import web
+from aiohttp import web, TCPConnector
 import asyncio
 import json
 import os
 import time
 from pathlib import Path
-from typing import Optional, Dict
-from eth_account import Account
-from eth_account.messages import encode_defunct
+from typing import Optional, Dict, Any, Tuple, List
+from eth_account import Account  
+from eth_account.messages import encode_defunct  
 
-class TreadfiHlExchange(HyperliquidBase):
-	def __init__(self, session_cookies=None, login_wallet_address=None, login_wallet_private_key=None, trading_wallet_address=None, account_name=None, fetch_by_ws=True, options=None):
-		super().__init__(
-			wallet_address=trading_wallet_address or login_wallet_address,
-			fetch_by_ws=fetch_by_ws,
-		)
+HL_BASE_URL = "https://api.hyperliquid.xyz"
+BASE_WS = "wss://api.hyperliquid.xyz/ws"
+
+class TreadfiHlExchange(MultiPerpDexMixin, MultiPerpDex):
+	# To do: hyperliquid의 ws를 사용해서 position과 가격을 fetch하도록 수정할것
+	# tread.fi는 자체 front api를 사용하여 주문을 넣기때문에 builder code와 fee를 따로 설정안해도댐.
+	def __init__(
+		self,
+		session_cookies: Optional[Dict[str, str]] = None,
+		login_wallet_address: str = None, 	# required
+		login_wallet_private_key: Optional[str] = None,
+		trading_wallet_address: str = None, # optional, 만약 로그인 주소랑 다르면 넣어야함
+		account_name: str = None, # required
+		fetch_by_ws: bool = True, # price and position
+		options: Any = None, # options
+	):
+		# used for signing
 		self.login_wallet_address = login_wallet_address
-		self.trading_wallet_address = trading_wallet_address or login_wallet_address
+
+		# trading_wallet_address will be used for get_position, get_collateral from HL ws
+		# if not given -> same as main_wallet
+		self.trading_wallet_address = trading_wallet_address if trading_wallet_address else login_wallet_address
+
+		self.walletAddress = None # ccxt style
+
 		self.account_name = account_name
 		self.account_id = None
+		self.fetch_by_ws = fetch_by_ws # use WS_POOL
 
 		self.url_base = "https://app.tread.fi/"
+		self._http: Optional[aiohttp.ClientSession] = None
 		self._logged_in = False
 		self._cookies = session_cookies or {}
 		self._login_pk = login_wallet_private_key
 		self._login_event: Optional[asyncio.Event] = None
+
+		self._http: Optional[aiohttp.ClientSession] = None
 		
+		self.ws_base = BASE_WS
+		self.spot_index_to_name = {}
+		self.spot_name_to_index = {}
+		self.spot_asset_index_to_pair = {}
+		self.spot_asset_pair_to_index = {}
+		self.spot_asset_index_to_bq = {}
+		self.spot_prices = None
+		self.dex_list = ['hl', 'xyz', 'flx', 'vntl', 'hyna'] # default
+
+		self.spot_token_sz_decimals: Dict[str, int] = {}
+		self._perp_meta_inited: bool = False
+		self.perp_metas_raw: Optional[List[dict]] = []
+		# 키 → (asset_id, szDecimals, maxLeverage, onlyIsolated, collateralToken)
+		#  - 메인(HL): 'BTC' (대문자)
+		#  - HIP-3:    'xyz:XYZ100' (원문 그대로)
+		self.perp_asset_map: Dict[str, Tuple[int, int, int, bool, int]] = {}
+
+		self._leverage_updated_to_max = False
+	
+		# WS 관련 내부 상태
+		self.ws_client: Optional[HLWSClientRaw] = None  # WS_POOL에서
+		self._ws_pool_key = None                        # comment: release 시 사용
+		
+		#self._ws_init_lock = asyncio.Lock()             # comment: create_ws_client 중복 호출 방지
+		self.fetch_by_ws = fetch_by_ws
+
 		self.options = options
 
 		self.login_html_path = os.environ.get(
@@ -41,10 +99,6 @@ class TreadfiHlExchange(HyperliquidBase):
 		if not self._has_valid_cookies():
 			print("No cookies are in given. Checking cached cookies in local dir..")
 			self._load_cached_cookies()
-
-	async def _make_signed_payload(self, action: dict) -> dict:
-		# Tread.fi는 HL 직접 서명을 사용하지 않음 → NotImplementedError 유지
-		raise NotImplementedError("TreadfiHl uses its own API for orders")
 	
 	async def init(self):
 		login_md = await self.login()
@@ -52,8 +106,164 @@ class TreadfiHlExchange(HyperliquidBase):
 			raise RuntimeError(f"not logged-in {login_md}")
 		
 		self.account_id = await self.get_account_id()
-		return await super().init()
-		# ----------------------------
+
+		s = self._session()
+		cache = await init_shared_hl_cache(session=s)
+		#print(get_shared_hl_cache())
+		# [CHANGED] 인스턴스 필드에 공유 캐시 참조 연결(복사 아님, 같은 dict 공유)
+		self.dex_list = cache["dex_list"]
+		self.spot_index_to_name = cache["spot_index_to_name"]
+		self.spot_name_to_index = cache["spot_name_to_index"]
+		self.spot_asset_index_to_pair = cache["spot_asset_index_to_pair"]
+		self.spot_asset_pair_to_index = cache["spot_asset_pair_to_index"]
+		self.spot_asset_index_to_bq = cache["spot_asset_index_to_bq"]
+		self.spot_token_sz_decimals = cache["spot_token_sz_decimals"]
+		self.perp_metas_raw = cache["perp_metas_raw"]
+		self.perp_asset_map = cache["perp_asset_map"]
+
+		"""
+		await init_spot_token_map(
+			s,
+			self.spot_index_to_name,
+			self.spot_name_to_index,
+			self.spot_asset_index_to_pair,
+			self.spot_asset_index_to_bq,
+			self.spot_token_sz_decimals,
+			) # spot meta
+		self.dex_list = await get_dex_list(s)        # perpDexs 리스트 (webData3 순서)
+
+		try:
+			await init_perp_meta_cache(
+				s, 
+				self.perp_metas_raw,
+				self.perp_asset_map
+				)
+		except Exception:
+			pass
+		"""
+		try:
+			await WS_POOL.prime_shared_meta(
+				dex_order=self.dex_list or ['hl', 'xyz', 'flx', 'vntl', 'hyna'],
+				idx2name=self.spot_index_to_name or {},
+				name2idx=self.spot_name_to_index or {},
+				pair_by_index=self.spot_asset_index_to_pair or {},
+				bq_by_index=self.spot_asset_index_to_bq or {},
+			)
+		except Exception:
+			pass
+		
+		# reverse id
+		self.spot_asset_pair_to_index = {
+			v: k for k, v in (self.spot_asset_index_to_pair or {}).items()
+		}
+		
+		if self.fetch_by_ws:
+			await self._create_ws_client()
+
+		return self
+	
+	def get_perp_quote(self, symbol, need_to_convert=False):
+		
+		if need_to_convert:
+			raw = str(self._symbol_convert_for_ws(symbol)).strip()
+		else:
+			raw = str(symbol).strip()
+
+		dex, coin_key = parse_hip3_symbol(raw)
+		_, _, _, _, quote_id = self.perp_asset_map.get(coin_key,(None, 0, 1, False, 0))
+		quote = self.spot_index_to_name.get(quote_id,'USDC')
+		return quote
+
+	def _symbol_convert_for_ws(self, symbol:str):
+		# perp -> BTC:PERP-USDC / xyz_XYZ100:PERP-USDC
+		# spot -> BTC-USDC
+		if ':' in symbol:
+			is_spot = False
+		else:
+			is_spot = True
+
+		if is_spot:
+			base = symbol.split('-')[0]
+			quote = symbol.split('-')[1]
+			return f"{base}/{quote}" # ex) BTC/USDC
+		else:
+			front = symbol.split(':')[0]
+			end = symbol.split(':')[1]
+			
+			dex = f"{front.split('_')[0]}:" if '_' in front else ""
+			base = front.split('_')[1] if '_' in front else front
+
+			quote = end.split('-')[1]
+
+			return f"{dex}{base}" # ex) xyz:XYZ100, BTC
+
+	async def _create_ws_client(self):
+		"""
+		WS 커넥션을 '1회 연결 + 다중 구독'으로 운용.
+		- 전역 풀(WS_POOL)에서 (ws_url,address) 키로 하나를 획득하여 공유
+		- 인스턴스 내부에서 중복 acquire를 방지
+		"""
+		#async with self._ws_init_lock:
+		#if self.ws_client is not None:
+		#	return self.ws_client
+		
+		address = self.trading_wallet_address
+		# acquire에 메타를 전달(풀 내부에서 최초 1회만 반영)
+		client = await WS_POOL.acquire(
+			ws_url=self.ws_base,
+			http_base=HL_BASE_URL,
+			address=address,
+			dex=None,
+			dex_order=self.dex_list or ['hl', 'xyz', 'flx', 'vntl', 'hyna'],
+			idx2name=self.spot_index_to_name or {},
+			name2idx=self.spot_name_to_index or {},
+			pair_by_index=self.spot_asset_index_to_pair or {},
+			bq_by_index=self.spot_asset_index_to_bq or {},
+		)
+		# 추가 DEX 구독
+		for dex in (self.dex_list or []):
+			if dex != "hl":
+				await client.ensure_allmids_for(dex)
+
+		self.ws_client = client
+		self._ws_pool_key = (self.ws_base, (address or "").lower())
+		#print(self._ws_pool_key)
+		#return self.ws_client
+
+	def _session(self) -> aiohttp.ClientSession:
+		if self._http is None or self._http.closed:
+			# [CHANGED] SSL 소켓 정리 강화 + keep-alive 강제 해제
+			self._http = aiohttp.ClientSession(
+				connector=TCPConnector(
+					force_close=True,             # 매 요청 후 소켓 닫기 → 종료 시 잔여 소켓 최소화
+					enable_cleanup_closed=True,   # 종료 중인 SSL 소켓 정리 보조 (로그 억제)
+				)
+			)
+		return self._http
+	
+	async def close(self):
+		if self._http and not self._http.closed:
+			await self._http.close()
+		if self._ws_pool_key and self.ws_client:
+			ws_url, addr = self._ws_pool_key
+			try:
+				# comment: 특정 소켓을 명시적으로 해제
+				await WS_POOL.release(ws_url=ws_url, address=addr, client=self.ws_client)
+			except Exception:
+				pass
+			finally:
+				self._ws_pool_key = None
+				self.ws_client = None
+
+
+	# 4) 컨텍스트 매니저(선택) 추가: async with TreadfiHlExchange(...) as ex:
+	#async def __aenter__(self):  # [ADDED]
+	#	return self
+
+	#async def __aexit__(self, exc_type, exc, tb):  # [ADDED]
+	#	await self.aclose()
+
+	# ----------------------------
 	# HTML (브라우저 지갑 서명 UI)
 	# ----------------------------
 	def _login_html(self) -> str:
@@ -453,6 +663,7 @@ alert('Signing/Submit failed: ' + e.message);
 			await self.aclose()
 		return result
 	
+
 	async def get_account_id(self) -> str | None:
 		"""
 		GET https://app.tread.fi/internal/sor/get_cached_account_balance
@@ -502,37 +713,13 @@ alert('Signing/Submit failed: ' + e.message);
 
 		return None
 
-	def get_perp_quote(self, symbol, need_to_convert=False): # default is False
-		if need_to_convert:
-			raw = str(self._symbol_convert_for_ws(symbol)).strip()
-		else:
-			raw = str(symbol).strip()
-		return super().get_perp_quote(raw)
-
-	def _symbol_convert_for_ws(self, symbol: str) -> str:
-		"""
-		Tread.fi 심볼 → WS/HL 심볼 변환
-		- perp: BTC:PERP-USDC → BTC, xyz_XYZ100:PERP-USDC → xyz:XYZ100
-		- spot: BTC-USDC → BTC/USDC
-		"""
-		if ':' in symbol:
-			# perp
-			front = symbol.split(':')[0]
-			dex = f"{front.split('_')[0]}:" if '_' in front else ""
-			base = front.split('_')[1] if '_' in front else front
-			return f"{dex}{base}"
-		else:
-			# spot
-			base, quote = symbol.split('-')[0], symbol.split('-')[1]
-			return f"{base}/{quote}"
-	
 	async def update_leverage(self, symbol, leverage=None):
 		
 		if self._leverage_updated_to_max:
 			return {"message":"already updated!"}
 
 		symbol_ws = self._symbol_convert_for_ws(symbol)
-		_, _, max_leverage, only_isolated, _ = self.perp_asset_map.get(symbol_ws, (None,None,1,False,0))
+		_, _, max_leverage, only_isolated, _ = self.perp_asset_map.get(symbol_ws, (None,None,1,False))
 		margin_mode = "ISOLATED" if only_isolated else "CROSS"
 		
 		if not leverage:
@@ -566,16 +753,6 @@ alert('Signing/Submit failed: ' + e.message);
 				self._leverage_updated_to_max = True
 			return data			
 			
-	async def get_position(self, symbol: str):
-		symbol_ws = self._symbol_convert_for_ws(symbol)
-		return await super().get_position(symbol_ws)
-
-	async def get_mark_price(self, symbol: str, *, is_spot: bool = False):
-		symbol_ws = self._symbol_convert_for_ws(symbol)
-		raw = str(symbol_ws).strip()
-		if "/" in raw:
-			is_spot = True
-		return await super().get_mark_price(symbol_ws, is_spot=is_spot)
 
 	def parse_orders(self, orders):
 		if not orders:
@@ -666,7 +843,285 @@ alert('Signing/Submit failed: ' + e.message);
 				data = {"status": r.status, "text": txt}
 			return self.parse_orders(data)
 
+	async def get_position(self, symbol):
+		"""
+		주어진 perp 심볼에 대한 단일 포지션 요약을 반환합니다.
+		반환 스키마:
+		  {"entry_price": float|None, "unrealized_pnl": float|None, "side": "long"|"short"|"flat", "size": float}
+		"""
+		symbol_ws = self._symbol_convert_for_ws(symbol)
+		if self.fetch_by_ws:
+			try:
+				pos = await self.get_position_ws(symbol_ws, timeout=2.0)
+				if pos is not None:
+					return pos
+			except Exception:
+				pass
+		
+		return await self.get_position_rest(symbol_ws)
 
+	async def get_position_ws(self, symbol: str, timeout: float = 2.0, dex: str | None = None) -> dict:
+		"""
+		webData3(WS 캐시)에서 조회. 스냅샷 미도착 시 timeout까지 짧게 대기합니다.
+		dex를 지정하지 않으면 self.dex_list 순서대로 검색합니다.
+		"""
+		address = self.trading_wallet_address
+		if not address:
+			return None
+		if not self.ws_client:
+			await self._create_ws_client()
+		deadline = time.monotonic() + timeout
+		while time.monotonic() < deadline:
+			if self.ws_client.get_positions_norm_for_user(address):
+				break
+			await asyncio.sleep(0.05)
+		pos_by_dex = self.ws_client.get_positions_norm_for_user(address)
+		sym = str(symbol).upper().strip()
+		# dex 지정시 우선
+		if dex:
+			pm = pos_by_dex.get(dex.lower(), {})
+			pos = pm.get(sym)
+			if pos:
+				parsed = self._parse_position_core(pos)
+				if parsed["size"] and parsed["side"] != "flat":
+					return parsed
+			return None
+		# 전체 DEX 검색
+		for pm in pos_by_dex.values():
+			pos = pm.get(sym)
+			if pos:
+				parsed = self._parse_position_core(pos)
+				if parsed["size"] and parsed["side"] != "flat":
+					return parsed
+		return None
+	
+	async def get_position_rest(self, symbol: str, dex: str | None = None) -> dict:
+		"""
+		REST clearinghouseState를 dex별로 조회하여 포지션을 찾습니다.
+		dex를 지정하지 않으면 self.dex_list 순서대로 검색합니다.
+		"""
+		address = self.trading_wallet_address
+		if not address:
+			return None
+
+		url = f"{HL_BASE_URL}/info"
+		headers = {"Content-Type": "application/json"}
+		s = self._session()
+
+		def _dex_param(name: Optional[str]) -> str:
+			k = (name or "").strip().lower()
+			return "" if (k == "" or k == "hl") else k
+
+		sym = str(symbol).strip().upper()
+		dex_iter = [dex] if dex else list(dict.fromkeys(self.dex_list or ["hl"]))
+
+		for d in dex_iter:
+			payload = {"type": "clearinghouseState", "user": address, "dex": _dex_param(d)}
+			try:
+				async with s.post(url, json=payload, headers=headers) as r:
+					data = await r.json()
+			except aiohttp.ContentTypeError:
+				continue
+			except Exception:
+				continue
+
+			aps = (data or {}).get("assetPositions") or []
+			for ap in aps:
+				pos = (ap or {}).get("position") or {}
+				coin = str(pos.get("coin") or "").upper()
+				if coin != sym:
+					continue
+				parsed = self._parse_position_core(pos)
+				if parsed["size"] and parsed["side"] != "flat":
+					return parsed
+
+		return None
+
+	def _parse_position_core(self, pos: dict) -> dict:
+		"""
+		clearinghouseState.assetPositions[*].position 또는 WS 정규화 포맷을
+		표준 스키마로 변환합니다.
+		반환 스키마:
+		{"entry_price": float|None, "unrealized_pnl": float|None, "side": "long"|"short"|"flat", "size": float}
+		"""
+		def fnum(x, default=None):
+			try:
+				return float(x)
+			except Exception:
+				return default
+
+		# WS 정규화 포맷(이미 float) 대응
+		if "entry_px" in pos or "upnl" in pos or "size" in pos:
+			size = fnum(pos.get("size"), 0.0) or 0.0
+			side = pos.get("side") or ("long" if size > 0 else ("short" if size < 0 else "flat"))
+			return {
+				"entry_price": fnum(pos.get("entry_px")),
+				"unrealized_pnl": fnum(pos.get("upnl"), 0.0),
+				"side": side,
+				"size": abs(size),
+			}
+
+		# REST 원본 포맷 대응
+		size_signed = fnum(pos.get("szi"), 0.0) or 0.0
+		side = "long" if size_signed > 0 else ("short" if size_signed < 0 else "flat")
+		return {
+			"entry_price": fnum(pos.get("entryPx")),
+			"unrealized_pnl": fnum(pos.get("unrealizedPnl"), 0.0),
+			"side": side,
+			"size": abs(size_signed),
+		}
+
+	async def close_position(self, symbol, position):
+		return await super().close_position(symbol, position, is_reduce_only=True)
+	
+	async def get_collateral(self):
+		if self.fetch_by_ws:
+			try:
+				return await self.get_collateral_ws()
+			except:
+				pass
+		
+		# fall back to rest api
+		try:
+			return await self.get_collateral_rest()
+		except:
+			return {
+				"available_collateral":None,
+				"total_collateral": None,
+				"spot": {disp: None for disp in STABLES_DISPLAY},
+			}
+	
+	async def get_collateral_rest(self):
+		"""
+		REST 기반 담보 조회(WS 폴백용):
+		- Perp: POST {http_base}/info {"type":"clearinghouseState", "user": <addr>, "dex": <""|name>}
+				 → marginSummary.accountValue, withdrawable 합산
+		- Spot: POST {http_base}/info {"type":"spotClearinghouseState", "user": <addr>}
+				 → balances[].total 중 스테이블만 추출(USDC, USDT/USDT0, USDH)
+
+		반환: {
+		  "available_collateral": float|None,
+		  "total_collateral": float|None,
+		  "spot": {"USDH": float|None, "USDC": float|None, "USDT": float|None}
+		}
+		"""
+		address = self.trading_wallet_address
+		if not address:
+			return {
+				"available_collateral": None,
+				"total_collateral": None,
+				"spot": {disp: None for disp in STABLES_DISPLAY},
+			}
+
+		url = f"{HL_BASE_URL}/info"
+		headers = {"Content-Type": "application/json"}
+		s = self._session()
+
+		# ---------------- Perp: clearinghouseState 집계 ----------------
+		def _dex_param(name: Optional[str]) -> str:
+			k = (name or "").strip().lower()
+			return "" if (k == "" or k == "hl") else k
+
+		dex_order = list(dict.fromkeys(self.dex_list or ["hl"]))  # 순서 유지 + 중복 제거
+
+		async def _fetch_ch(dex_name: str) -> tuple[float, float]:
+			payload = {"type": "clearinghouseState", "user": address, "dex": _dex_param(dex_name)}
+			try:
+				async with s.post(url, json=payload, headers=headers) as r:
+					data = await r.json()
+			except aiohttp.ContentTypeError:
+				return (0.0, 0.0)
+			except Exception:
+				return (0.0, 0.0)
+			try:
+				ms = (data or {}).get("marginSummary") or {}
+				av = float(ms.get("accountValue") or 0.0)
+			except Exception:
+				av = 0.0
+			try:
+				wd = float((data or {}).get("withdrawable") or 0.0)
+			except Exception:
+				wd = 0.0
+			return (av, wd)
+
+		# 병렬 호출
+		perp_results = await asyncio.gather(*[_fetch_ch(d) for d in dex_order], return_exceptions=False)
+		av_sum = sum(av for av, _ in perp_results)
+		wd_sum = sum(wd for _, wd in perp_results)
+
+		total_collateral = av_sum if av_sum != 0.0 else None
+		available_collateral = wd_sum if wd_sum != 0.0 else None
+
+		# ---------------- Spot: spotClearinghouseState ----------------
+		spot_map = {disp: 0.0 for disp in STABLES_DISPLAY}  # 기본 0.0, 표기는 DISPLAY
+		try:
+			payload_spot = {"type": "spotClearinghouseState", "user": address}
+			async with s.post(url, json=payload_spot, headers=headers) as r:
+				spot_resp = await r.json()
+			balances_list = (spot_resp or {}).get("balances") or []
+			balances = {}
+			for b in balances_list:
+				if not isinstance(b, dict):
+					continue
+				name = str(b.get("coin") or b.get("tokenName") or b.get("token") or "").upper()
+				try:
+					total = float(b.get("total") or 0.0)
+				except Exception:
+					continue
+				if name:
+					balances[name] = total
+
+			for onchain, disp in zip(STABLES, STABLES_DISPLAY):
+				spot_map[disp] = float(balances.get(onchain, 0.0))
+
+		except aiohttp.ContentTypeError:
+			pass
+		except Exception:
+			pass
+
+		return {
+			"available_collateral": available_collateral,
+			"total_collateral": total_collateral,
+			"spot": spot_map,
+		}
+	
+	async def get_collateral_ws(self, timeout: float = 2.0):
+		"""
+		WS(webData3/spotState) 기반 담보 조회.
+		- 주소가 설정되어 있어야 하며, 첫 스냅샷이 도착할 때까지 최대 timeout 초 대기.
+		"""
+		address = self.trading_wallet_address
+		if not address:
+			return {
+				"available_collateral": None,
+				"total_collateral": None,
+				"spot": {disp: None for disp in STABLES_DISPLAY},
+			}
+		
+		if not self.ws_client:
+			await self._create_ws_client()
+		# 최초 스냅샷 폴링
+		deadline = time.monotonic() + timeout
+		while time.monotonic() < deadline:
+			if self.ws_client.get_margin_by_dex_for_user(address):
+				break
+			await asyncio.sleep(0.05)
+
+		margin = self.ws_client.get_margin_by_dex_for_user(address)
+		av_sum = sum((m or {}).get("accountValue", 0.0) for m in margin.values())
+		wd_sum = sum((m or {}).get("withdrawable", 0.0) for m in margin.values())
+
+		balances = self.ws_client.get_balances_by_user(address)
+		spot_map = {}
+		for onchain, disp in zip(STABLES, STABLES_DISPLAY):
+			spot_map[disp] = float(balances.get(onchain, 0.0))
+
+		return {
+			"available_collateral": (wd_sum if wd_sum != 0.0 else None),
+			"total_collateral": (av_sum if av_sum != 0.0 else None),
+			"spot": spot_map,
+		}
+	
 	async def get_open_orders(self, symbol):
 		"""
 		GET https://app.tread.fi/internal/ems/get_order_table_rows
@@ -784,3 +1239,141 @@ alert('Signing/Submit failed: ' + e.message);
 							"message": str(e)
 						})
 		return results
+
+
+	async def get_mark_price(self,symbol,*,is_spot=False):
+		symbol_ws = self._symbol_convert_for_ws(symbol)
+		raw = str(symbol_ws).strip()
+		if "/" in raw:
+			is_spot = True # auto redirect
+
+		if self.fetch_by_ws:
+			try:
+				px = await self.get_mark_price_ws(symbol_ws, is_spot=is_spot, timeout=2)
+				return float(px)
+			except Exception as e:
+				pass
+		
+		# default rest api
+		try:
+			px = await self.get_mark_price_rest(symbol_ws, is_spot=is_spot)
+			return float(px) if px is not None else None
+		except Exception as e:
+			return None
+	
+	async def get_mark_price_rest(self,symbol,*,is_spot=False):
+		dex = None
+		if ":" in symbol:
+			dex = symbol.split(":")[0].lower()
+		
+		url = f"{HL_BASE_URL}/info"
+		headers = {"Content-Type": "application/json"}
+
+		if is_spot:
+			payload = {"type":"spotMetaAndAssetCtxs"}
+		else:
+			payload = {"type":"metaAndAssetCtxs"}
+			if dex:
+				payload["dex"] = dex
+		
+		
+		s = self._session()
+		async with s.post(url, json=payload, headers=headers) as r:
+			status = r.status
+			try:
+				resp = await r.json()
+			except aiohttp.ContentTypeError:
+				# 비-JSON이면 폴백 불가 → None
+				return None
+
+		universe = resp[0].get("universe") if isinstance(resp, list) and len(resp) >= 2 and isinstance(resp[0], dict) else None
+		meta = resp[1] if isinstance(resp, list) and len(resp) >= 2 else None
+		
+		if universe is None or meta is None:
+			return None
+
+		if is_spot:
+			for pair in self._spot_pair_candidates(symbol.upper()):
+				spot_idx = self.spot_asset_pair_to_index.get(pair)
+				if spot_idx is None:
+					# UBTC, UETH, ..., 외부에서 pair 검증해도 이 부분은 유지
+					spot_idx = self.spot_asset_pair_to_index.get(f"U{pair}")
+				try:
+					price = meta[spot_idx].get('markPx')
+					#print(price, pair)
+					return price # USDC, USDT, USDH 순으로 찾아서 먼저 나오는거
+				except:
+					continue
+
+			return None
+				
+		else:
+			for idx, value in enumerate(universe):
+				if value.get('name').upper() == symbol.upper():
+					#print(idx, value.get('name'), symbol)
+					price = meta[idx].get('markPx')
+					return price
+		
+		return None
+	
+	async def get_mark_price_ws(self, symbol, *, is_spot=False, timeout: float = 3.0):
+		"""
+		WS 캐시 기반 마크 프라이스 조회.
+		- is_spot=True 이면 'BASE/QUOTE' 페어 가격을 조회
+		- is_spot=False 이면 perp(예: 'BTC') 가격을 조회
+		- 첫 틱이 아직 도착하지 않은 경우 wait_price_ready가 있으면 timeout까지 대기
+		- 값을 얻지 못하면 예외를 던져 상위(get_mark_price)에서 REST 폴백하게 한다.
+		"""
+		if not self.ws_client:
+			await self._create_ws_client()
+
+		raw = str(symbol).strip()
+		#if "/" in raw:
+		#    is_spot = True
+
+		if is_spot:
+			for pair in self._spot_pair_candidates(raw.upper()):
+				# spot_pair로 명시
+				if hasattr(self.ws_client, "wait_price_ready"):
+					try:
+						ready = await asyncio.wait_for(
+							self.ws_client.wait_price_ready(pair, timeout=timeout, kind="spot_pair"),
+							timeout=timeout
+						)
+						if not ready:
+							continue
+					except Exception:
+						continue
+				
+				px = self.ws_client.get_spot_pair_px(pair)
+				if px is not None:
+					return float(px)
+
+			# 모든 후보 실패
+			raise TimeoutError(f"WS spot price not ready. tried={self._spot_pair_candidates(raw.upper())}")
+
+		# Perp 경로
+		key = raw.upper()
+		# perp로 명시
+		try:
+			await asyncio.wait_for(
+				self.ws_client.wait_price_ready(key, timeout=timeout, kind="perp"),
+				timeout=timeout
+			)
+		except Exception:
+			pass
+
+		px = self.ws_client.get_price(key)
+		if px is None:
+			raise TimeoutError(f"WS perp price not ready for {key}")
+		return float(px)
+	
+	def _spot_pair_candidates(self, raw_symbol: str) -> list[str]:
+		"""
+		'BASE/QUOTE'면 그대로 1개, 아니면 STABLES 우선순위로 BASE/QUOTE 후보를 만든다.
+		"""
+		rs = str(raw_symbol).strip()
+		if "/" in rs:
+			return [rs.upper()]
+		base = rs.upper()
+		return [f"{base}/{q}" for q in STABLES]

@@ -2,7 +2,7 @@ from multi_perp_dex import MultiPerpDex, MultiPerpDexMixin
 
 class Template(MultiPerpDexMixin,MultiPerpDex):
     def __init__(self):
-        pass
+        super().__init__()
     
     async def create_order(self, symbol, side, amount, price=None, order_type='market'):
         pass

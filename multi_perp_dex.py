@@ -1,6 +1,9 @@
 from abc import ABC, abstractmethod
 
 class MultiPerpDex(ABC):
+    def __init__(self):
+        self.has_spot = False
+
     @abstractmethod
     async def create_order(self, symbol, side, amount, price=None, order_type='market'):
         pass

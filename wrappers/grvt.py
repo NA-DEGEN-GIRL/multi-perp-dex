@@ -22,6 +22,7 @@ grvt_logger = create_logger("grvt_logger", "grvt_error.log")
 
 class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
     def __init__(self, api_key, account_id, secret_key):
+        super().__init__()
         logging.getLogger().setLevel(logging.ERROR)
         self.logger = grvt_logger
         self.exchange = GrvtCcxtPro(
@@ -37,6 +38,9 @@ class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
     async def init(self):
         await self.exchange.load_markets()        
         return self
+    
+    def get_perp_quote(self, symbol):
+        return 'USD'
     
     async def get_mark_price(self,symbol):
         res = await self.exchange.fetch_ticker(symbol)

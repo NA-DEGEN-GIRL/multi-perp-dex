@@ -7,6 +7,8 @@ from multi_perp_dex import MultiPerpDex, MultiPerpDexMixin
 
 class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
     def __init__(self,api_key,secret_key):
+        super().__init__()
+        self.has_spot = True
         self.API_KEY = api_key #API_KEY_TRADING
         self.PRIVATE_KEY = secret_key #SECRET_TRADING
         self.BASE_URL = "https://api.backpack.exchange/api/v1"
@@ -25,6 +27,9 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
             else:
                 return str(n).rstrip('0').rstrip('.')
         return str(n)
+    
+    def get_perp_quote(self, symbol):
+        return 'USD'
     
     def parse_orders(self, orders):
         if not orders:

@@ -251,8 +251,9 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         evm_wallet_address: str = None, # required
         session_cookies: Optional[Dict[str, str]] = None, # 1) cache있으면 사용, 2) cache 안될 경우 sign login OR webloging
         evm_private_key: Optional[str] = None, # 필수 아님
-		options: Any = None, # options # 다른 프로그램에서 사용할 경우 대비
+        options: Any = None, # options # 다른 프로그램에서 사용할 경우 대비
     ):
+        super().__init__()
         if not evm_wallet_address:
             raise ValueError("evm_wallet_address is required")
         self.address = to_checksum_address(evm_wallet_address)
@@ -283,6 +284,9 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         # 세션 상태(초기화/로그인 이후에는 캐시만 사용)
         self._session_ready: bool = False
         self._vr_token: Optional[str] = None  # 메모리 보관
+
+    def get_perp_quote(self, symbol):
+        return 'USD'
 
     async def _probe_cookie_valid(self, vr_token: str) -> bool:
         if not vr_token:
