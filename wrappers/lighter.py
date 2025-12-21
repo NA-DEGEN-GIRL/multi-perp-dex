@@ -13,7 +13,7 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         logging.getLogger().setLevel(logging.WARNING)
         self.url = "https://mainnet.zklighter.elliot.ai"
         # self.chain_id = 304 # no need anymore
-        self.client = SignerClient(url=self.url, private_key=private_key, account_index=account_id, api_key_index=api_key_id)
+        self.client = SignerClient(url=self.url, api_private_keys={api_key_id: private_key}, account_index=account_id)
         #self.apiAccount = AccountApi(self.client.api_client)
         self.apiOrder = OrderApi(self.client.api_client)
         self.market_info = {}
@@ -105,7 +105,7 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         )
         # been changed to tuple
         resp = resp[1]
-
+        
         try:
             parsed = json.loads(resp.message)
             return {

@@ -11,12 +11,12 @@ coin = 'BTC'
 symbol = f'{coin}'
 
 test_bool = {
-    "limit_sell":False,
-    "limit_buy":False,
-    "get_open_orders":False,
-    "cancel_orders":False,
-    "market_buy":False,
-    "market_sell":False,
+    "limit_sell":True,
+    "limit_buy":True,
+    "get_open_orders":True,
+    "cancel_orders":True,
+    "market_buy":True,
+    "market_sell":True,
     "get_position":True,
     "close_position":True,
 }
@@ -30,14 +30,14 @@ async def main():
     coll = await lighter.get_collateral()
     print(coll)
     await asyncio.sleep(0.1)
-    '''
+    
     if test_bool["limit_sell"]:
-        res = await lighter.create_order(symbol, 'sell', 0.001, price=110000)
+        res = await lighter.create_order(symbol, 'sell', 0.001, price=89000)
         print(res)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.5)
     
     if test_bool["limit_buy"]:
-        res = await lighter.create_order(symbol, 'buy', 0.001, price=100000)
+        res = await lighter.create_order(symbol, 'buy', 0.001, price=85000)
         print(res)
         await asyncio.sleep(0.5)
     
@@ -50,24 +50,28 @@ async def main():
     if test_bool["cancel_orders"]:
         res = await lighter.cancel_orders(symbol)
         print(res)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.5)
 
     if test_bool["market_buy"]:
-        res = await lighter.create_order(symbol, 'buy', 0.001)
+        res = await lighter.create_order(symbol, 'buy', 0.0003)
         print(res)
+        await asyncio.sleep(0.5)
     
     if test_bool["market_sell"]:
-        res = await lighter.create_order(symbol, 'sell', 0.001)
+        res = await lighter.create_order(symbol, 'sell', 0.0002)
         print(res)
+        await asyncio.sleep(0.5)
     
     if test_bool["get_position"]:
         position = await lighter.get_position(symbol)
         print(position)
+        await asyncio.sleep(0.5)
     
     if test_bool["close_position"]:
         res = await lighter.close_position(symbol, position)
         print(res)
-    '''
+        await asyncio.sleep(0.5)
+    
     await lighter.close()
 
 

@@ -106,8 +106,10 @@ execnet==2.1.1
     # via
     #   cairo-lang
     #   pytest-xdist
-fastecdsa==3.0.1
-    # via cairo-lang
+fastecdsa==2.3.0
+    # via
+    #   -r requirements.in
+    #   cairo-lang
 frozendict==2.4.6
     # via cairo-lang
 frozenlist==1.5.0
@@ -137,7 +139,7 @@ jsonalias==0.1.1
     # via solders
 lark==1.2.2
     # via cairo-lang
-lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@c9b8de6fd6864ede0fd7fb61d85ffb3614d178c9
+lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@b489f27896dd9df8c45c22b1b85adf5011861e3a
     # via -r requirements.in
 marshmallow==3.26.1
     # via
