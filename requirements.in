@@ -4,7 +4,7 @@ ccxt
 eth-hash
 cairo-lang
 grvt-pysdk
-lighter-sdk @ git+https://github.com/elliottech/lighter-python.git
+lighter-sdk @ git+https://github.com/elliottech/lighter-python.git@b489f27896dd9df8c45c22b1b85adf5011861e3a
 curl_cffi
 solders>=0.19.0
 base58>=2.1.1
