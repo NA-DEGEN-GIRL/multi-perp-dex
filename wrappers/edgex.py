@@ -183,7 +183,7 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
                 "side": side.upper(),
                 "clientOrderId": client_order_id,
             }
-            print(body)
+            #print(body)
             
         else:
             LIMIT_ORDER_WITH_FEES = 3

@@ -36,7 +36,7 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
                     else:
                         composite_symbol = f"{base_symbol}/{quote}"
                         self.available_symbols['spot'].append(composite_symbol)
-                    print(market_type,base_symbol,quote,symbol)
+                    #print(market_type,base_symbol,quote,symbol)
         
 
     def _generate_signature(self, instruction):

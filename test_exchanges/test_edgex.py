@@ -13,8 +13,8 @@ symbol = symbol_create('edgex',coin,is_spot=False)
 async def main():
     edgex = await create_exchange('edgex', EDGEX_KEY)
 
-    #available_symbols = await edgex.get_available_symbols()
-    #print(available_symbols)
+    available_symbols = await edgex.get_available_symbols()
+    print(available_symbols)
     #return
 
     price = await edgex.get_mark_price(symbol)
