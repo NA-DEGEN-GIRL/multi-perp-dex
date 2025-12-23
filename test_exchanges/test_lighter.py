@@ -27,7 +27,7 @@ async def main():
     available_symbols = await lighter.get_available_symbols()
     print(available_symbols)
     
-    price = await lighter.get_mark_price(symbol)
+    price = await lighter.get_mark_price('ETH')
     print(price)
 
     #res = await lighter.create_order(symbol, 'buy', 0.01, price=2500)

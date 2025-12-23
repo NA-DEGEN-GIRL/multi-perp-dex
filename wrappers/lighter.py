@@ -100,7 +100,8 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
     async def get_mark_price(self, symbol):
         m_info = self.market_info[symbol]
         market_id = m_info["market_id"]
-        is_spot = m_info.get('market_type',False)
+        is_spot = m_info.get('market_type','perp') == 'spot'
+        #print(m_info)
         
         res = await self.apiOrder.order_book_details(market_id=market_id)
         if is_spot:
