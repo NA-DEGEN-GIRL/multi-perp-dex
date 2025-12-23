@@ -7,6 +7,8 @@ import time
 import json
 import logging
 
+STABLES = ['USDC']
+
 class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
     def __init__(self, account_id, private_key, api_key_id, l1_address):
         super().__init__()
@@ -20,6 +22,11 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         self._cached_auth_token = None
         self._auth_expiry_ts = 0
         self.l1_address = l1_address
+        self.has_spot = True
+        self.spot_balance = {}
+        self._collateral_cache: dict | None = None
+        self._collateral_last_fetch_ts: float = 0.0
+        self._collateral_cooldown_sec: float = 0.5  # 최소 호출 간격(초), 필요시 
 
     def get_auth(self, expiry_sec=600):
         now = int(time.time())
@@ -50,6 +57,27 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         self.update_available_symbols()
         return self
     
+    async def get_spot_balance(self, coin: str = None) -> dict:
+        """
+        spot 잔고 조회.
+        - 내부적으로 get_collateral()을 호출해 self.spot_balance를 갱신
+        - 쿨다운 내 재호출 시 캐시 사용
+        - coin이 주어지면 해당 코인만, None이면 전체 반환
+
+        반환 형식:
+          { "USDC": { "total": float, "available": float, "locked": float }, ... }
+        """
+        # get_collateral 내부에서 spot_balance도 갱신됨
+        await self.get_collateral()
+
+        if coin is not None:
+            coin_upper = coin.upper()
+            if coin_upper in self.spot_balance:
+                return {coin_upper: self.spot_balance[coin_upper]}
+            return {}
+
+        return dict(self.spot_balance)
+    
     def update_available_symbols(self):
         self.available_symbols['perp'] = []
         self.available_symbols['spot'] = []
@@ -65,7 +93,6 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
 
             else:
                 self.available_symbols['spot'].append(k)
-        
     
     async def close(self):
         await self.client.close()
@@ -73,8 +100,13 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
     async def get_mark_price(self, symbol):
         m_info = self.market_info[symbol]
         market_id = m_info["market_id"]
+        is_spot = m_info.get('market_type',False)
+        
         res = await self.apiOrder.order_book_details(market_id=market_id)
-        price = res.to_dict()["order_book_details"][0]["last_trade_price"]
+        if is_spot:
+            price = res.to_dict()["spot_order_book_details"][0]["last_trade_price"]
+        else:
+            price = res.to_dict()["order_book_details"][0]["last_trade_price"]
         return price
 
     async def create_order(self, symbol, side, amount, price=None, order_type='market'):
@@ -175,8 +207,23 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
     async def close_position(self, symbol, position):
         return await super().close_position(symbol, position)
 
-    async def get_collateral(self):
-        
+    async def get_collateral(self, *, force_refresh: bool = False) -> dict:
+        """
+        담보/잔고 조회.
+        - 쿨다운  내 재호출 시 캐시 반환
+        - force_refresh=True면 강제로 API 호출
+        """
+        now = time.time()
+
+        # 캐시 유효 → 바로 반환
+        if (
+            not force_refresh
+            and self._collateral_cache is not None
+            and (now - self._collateral_last_fetch_ts) < self._collateral_cooldown_sec
+        ):
+            print('cache 값으로 반환')
+            return self._collateral_cache
+
         l1_address = self.l1_address
         url = f"{self.url}/api/v1/account?by=l1_address&value={l1_address}"
         headers = {"accept": "application/json"}
@@ -188,7 +235,7 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
                 for account in accounts:
                     
                     if account['index'] == self.client.account_index:
-                        total_collateral = account['total_asset_value']
+                        total_collateral = float(account['total_asset_value'])
                         margin_used = 0
                         for pos in account['positions']:
                             position_value = float(pos['position_value'])
@@ -196,10 +243,44 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
                             margin_used += position_value*initial_margin_fraction
                             
                         available_collateral = float(total_collateral)-margin_used
-                        
-                return {
-            "available_collateral": round(float(available_collateral), 2),
-            "total_collateral": round(float(total_collateral), 2)
+
+                        # spot data
+                        assets = account.get('assets',{})
+                        spot = {}
+                        for asset in assets:
+                            symbol = asset.get('symbol',"")
+                            total = float(asset.get('balance',0))
+                            locked = float(asset.get('locked_balance',0))
+                            available = total - locked
+                            
+                            self.spot_balance[symbol] = {'total':total, 
+                                                         'available':available,
+                                                         'locked':locked
+                                                         }
+                            
+                            # spot stable data
+                            if symbol in STABLES:
+                                spot[symbol] = total
+                            
+                            #print(symbol,total,locked,available)
+
+                    result = {
+                            "available_collateral": round(available_collateral, 2),
+                            "total_collateral": round(total_collateral, 2),
+                            "spot": spot,
+                        }
+
+                    # 캐시 갱신
+                    self._collateral_cache = result
+                    self._collateral_last_fetch_ts = now
+
+                    return result
+                
+        # 해당 계정 못 찾음 → 빈 결과(캐시 안 함)
+        return {
+            "available_collateral": 0.0,
+            "total_collateral": 0.0,
+            "spot": {},
         }
     
     async def get_open_orders(self, symbol):

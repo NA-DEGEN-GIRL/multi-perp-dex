@@ -1,13 +1,13 @@
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from exchange_factory import create_exchange
+from exchange_factory import create_exchange, symbol_create
 import asyncio
 from keys.pk_lighter import LIGHTER_KEY
 
 # test done
 
-coin = 'BTC'
+coin = 'ETH/USDC'
 symbol = f'{coin}'
 
 test_bool = {
@@ -26,12 +26,20 @@ async def main():
 
     available_symbols = await lighter.get_available_symbols()
     print(available_symbols)
-    return
+    
     price = await lighter.get_mark_price(symbol)
     print(price)
 
+    #res = await lighter.create_order(symbol, 'buy', 0.01, price=2500)
+    #print(res)
+    #await asyncio.sleep(0.5)
+    
     coll = await lighter.get_collateral()
     print(coll)
+    
+    res = await lighter.get_spot_balance('ETH')
+    print(res)
+    return
     await asyncio.sleep(0.1)
     
     if test_bool["limit_sell"]:
