@@ -274,12 +274,17 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         available = res.get("available_collateral") or 0
         if amount > available:
             return {"status": "error", "message": f"insufficient perp balance: available={available} {coll_coin}, requested={amount}"}
+        
+        str_amount = str(amount)
+        if self.vault_address:
+            str_amount += f" subaccount:{self.vault_address}"
+        #print(str_amount, self.vault_address)
 
         # 액션 생성 (signatureChainId, hyperliquidChain은 서명 함수에서 삽입됨)
         nonce = int(time.time() * 1000)
         action = {
             "type": "usdClassTransfer",
-            "amount": str(amount),
+            "amount": str_amount,
             "toPerp": False,  # perp → spot
             "nonce": nonce,
             # signatureChainId, hyperliquidChain은 sign_user_signed_action에서 삽입됨
@@ -307,15 +312,15 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         if amount > available:
             return {"status": "error", "message": f"insufficient spot balance: available={available} {coll_coin}, requested={amount}"}
 
-        amount = str(amount)
+        str_amount = str(amount)
         if self.vault_address:
             str_amount += f" subaccount:{self.vault_address}"
-
+        #print(str_amount)
         # 액션 생성
         nonce = int(time.time() * 1000)
         action = {
             "type": "usdClassTransfer",
-            "amount": str(amount),
+            "amount": str_amount,
             "toPerp": True,  # spot → perp
             "nonce": nonce,
             # signatureChainId, hyperliquidChain은 sign_user_signed_action에서 삽입됨

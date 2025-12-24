@@ -1,4 +1,6 @@
 from mpdex.utils.hyperliquid_base import HyperliquidBase
+from eth_account import Account
+from .hl_sign import sign_l1_action as hl_sign_l1_action, sign_user_signed_action as hl_sign_user_signed_action
 import aiohttp
 from aiohttp import web
 import asyncio
@@ -11,7 +13,13 @@ from eth_account import Account
 from eth_account.messages import encode_defunct
 
 class TreadfiHlExchange(HyperliquidBase):
-	def __init__(self, session_cookies=None, login_wallet_address=None, login_wallet_private_key=None, trading_wallet_address=None, account_name=None, fetch_by_ws=True, options=None):
+	USD_CLASS_TRANSFER_TYPES = [
+		{"name": "hyperliquidChain", "type": "string"},
+		{"name": "amount", "type": "string"},
+		{"name": "toPerp", "type": "bool"},
+		{"name": "nonce", "type": "uint64"},
+	]
+	def __init__(self, session_cookies=None, login_wallet_address=None, login_wallet_private_key=None, trading_wallet_address=None, account_name=None, fetch_by_ws=True, trading_wallet_private_key=None, options=None):
 		super().__init__(
 			wallet_address=trading_wallet_address or login_wallet_address,
 			fetch_by_ws=fetch_by_ws,
@@ -26,6 +34,8 @@ class TreadfiHlExchange(HyperliquidBase):
 		self._cookies = session_cookies or {}
 		self._login_pk = login_wallet_private_key
 		self._login_event: Optional[asyncio.Event] = None
+
+		self.trading_wallet_private_key = trading_wallet_private_key # only for transfer
 		
 		self.options = options
 
@@ -785,8 +795,76 @@ alert('Signing/Submit failed: ' + e.message);
 						})
 		return results
 	
+	'''
 	async def transfer_to_perp(self, amount):
 		raise RuntimeError("Tread.fi는 내부전송 미지원")
 
 	async def transfer_to_spot(self, amount):
 		raise RuntimeError("Tread.fi는 내부전송 미지원")
+	'''
+	
+	def _get_wallet(self, *, for_user_action: bool = False):
+		"""
+		서명용 wallet 객체 반환.
+		- for_user_action=True: User Signed Action은 반드시 실제 wallet으로 서명해야 함
+		- for_user_action=False: 일반 L1 액션은 agent 또는 wallet 사용
+		"""
+		priv = self.trading_wallet_private_key
+	
+		if not priv:
+			raise RuntimeError("trading_wallet_private_key가 필요합니다 (User Signed Action)")
+
+		priv_clean = priv[2:] if priv.startswith("0x") else priv
+		wallet = Account.from_key(bytes.fromhex(priv_clean))
+		
+		# private key로 파생된 주소
+		derived_address = wallet.address.lower()
+		
+		# trading_wallet_address 정규화
+		trading_addr = (self.trading_wallet_address or "").lower()
+		if trading_addr and not trading_addr.startswith("0x"):
+			trading_addr = f"0x{trading_addr}"
+		
+		# 주소가 다르면 vault_address로 설정
+		if trading_addr and derived_address != trading_addr:
+			self.vault_address = self.trading_wallet_address
+			# wallet_address도 파생된 주소로 업데이트 (서명 주체)
+			self.wallet_address = wallet.address
+		
+		#print(self.vault_address)
+		#print(self.wallet_address)
+		#return
+
+		return wallet
+	
+	async def _make_transfer_payload(self, action: dict) -> dict:
+		"""
+		usdClassTransfer 전용 (sign_user_signed_action)
+		- action에는 이미 type, amount, toPerp, nonce가 들어있음
+		- signatureChainId, hyperliquidChain은 sign_user_signed_action에서 삽입
+		"""
+		wallet = self._get_wallet()
+
+		nonce = action.get("nonce") or int(time.time() * 1000)
+		action["nonce"] = nonce
+
+		# vault_address가 설정되었으면 amount에 subaccount 추가
+		raw_amount = action.get("amount", "")
+		print(raw_amount)
+		# 이미 subaccount가 포함되어 있지 않은 경우에만 추가
+		if self.vault_address and "subaccount:" not in raw_amount:
+			action["amount"] = f"{raw_amount} subaccount:{self.vault_address}"
+
+		sig = hl_sign_user_signed_action(
+			wallet=wallet,
+			action=action,
+			payload_types=self.USD_CLASS_TRANSFER_TYPES,
+			primary_type="HyperliquidTransaction:UsdClassTransfer",
+			is_mainnet=True,
+		)
+
+		nonce = action.get("nonce") or int(time.time() * 1000)
+		payload = {"action": action, "nonce": nonce, "signature": sig}
+		#if self.vault_address:
+		#	payload["vaultAddress"] = self.vault_address
+		return payload

@@ -23,10 +23,29 @@ async def main():
 
     res = await treadfi_hl.get_collateral()
     print(res)
+    await asyncio.sleep(0.5)
+
+    res = await treadfi_hl.transfer_to_spot(5)
+    print(res)
+    await asyncio.sleep(0.5)
+
+    res = await treadfi_hl.get_collateral()
+    print(res)
+    await asyncio.sleep(1.5)
+
+    res = await treadfi_hl.transfer_to_perp(5)
+    print(res)
+    await asyncio.sleep(0.5)
+
+    res = await treadfi_hl.get_collateral()
+    print(res)
+    await asyncio.sleep(0.5)
     #return
     #quote = treadfi_hl.get_perp_quote(symbol, need_to_convert=True)
     #print(quote)
     #return
+
+    return
 
     l_price = price*0.97
     res = await treadfi_hl.create_order(symbol, 'buy', amount, price=l_price)

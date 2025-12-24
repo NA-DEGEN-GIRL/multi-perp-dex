@@ -67,6 +67,7 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
             key_params.trading_wallet_address, 
             key_params.account_name, 
             key_params.fetch_by_ws,
+            getattr(key_params,'trading_wallet_private_key',None),
             key_params.options if hasattr(key_params,"options") else None
             ).init()
     
