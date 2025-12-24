@@ -97,6 +97,15 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
     async def close(self):
         await self.client.close()
     
+
+    async def transfer_to_spot(self, amount):
+        print("미구현")
+        return
+
+    async def transfer_to_perp(self, amount):
+        print("미구현")
+        return
+    
     async def get_mark_price(self, symbol):
         m_info = self.market_info[symbol]
         market_id = m_info["market_id"]

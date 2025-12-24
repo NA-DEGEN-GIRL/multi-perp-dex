@@ -254,6 +254,14 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         for k in self.spot_asset_pair_to_index:
             self.available_symbols['spot'].append(k)
 
+    async def transfer_to_spot(self, amount):
+        print("미구현")
+        return
+
+    async def transfer_to_perp(self, amount):
+        print("미구현")
+        return
+
     async def _create_ws_client(self):
         if self.ws_client is not None:
             return
