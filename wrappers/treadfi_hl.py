@@ -784,3 +784,9 @@ alert('Signing/Submit failed: ' + e.message);
 							"message": str(e)
 						})
 		return results
+	
+	async def transfer_to_perp(self, amount):
+		raise RuntimeError("Tread.fi는 내부전송 미지원")
+
+	async def transfer_to_spot(self, amount):
+		raise RuntimeError("Tread.fi는 내부전송 미지원")

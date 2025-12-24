@@ -39,3 +39,7 @@ class SuperstackExchange(HyperliquidBase):
         if self.vault_address:
             payload["vaultAddress"] = self.vault_address
         return payload
+    
+    async def _make_transfer_payload(self, action: dict) -> dict:
+        """usdClassTransfer도 Superstack API로 서명"""
+        return await self._make_signed_payload(action)

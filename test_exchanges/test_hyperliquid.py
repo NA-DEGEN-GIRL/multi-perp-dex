@@ -33,19 +33,38 @@ async def main():
     superstack = await create_exchange('superstack',SUPERSTACK_KEY)
     await asyncio.sleep(0.2)
 
-    available_symbols = await hyperliquid.get_available_symbols()
-    print(available_symbols)
-
-    res = await hyperliquid.get_spot_balance_ws("UBTC")
+    res = await hyperliquid.get_collateral()
     print(res)
+    await asyncio.sleep(0.5)
 
-
-    price1 = await hyperliquid.get_mark_price("UBTC/USDC") #,is_spot=is_spot)
-    print(price1)
-
-    l_price = price1*0.97
-    res = await hyperliquid.create_order("UBTC/USDC", 'buy', amount1, price=l_price)
+    res = await hyperliquid.transfer_to_spot(10)
     print(res)
+    await asyncio.sleep(0.5)
+
+    res = await hyperliquid.get_collateral()
+    print(res)
+    await asyncio.sleep(1.5)
+
+    res = await hyperliquid.transfer_to_perp(10)
+    print(res)
+    await asyncio.sleep(0.5)
+
+    res = await hyperliquid.get_collateral()
+    print(res)
+    await asyncio.sleep(0.5)
+
+    #available_symbols = await hyperliquid.get_available_symbols()
+    #print(available_symbols)
+
+    #res = await hyperliquid.get_spot_balance_ws("UBTC")
+    #print(res)
+
+    #price1 = await hyperliquid.get_mark_price("UBTC/USDC") #,is_spot=is_spot)
+    #print(price1)
+
+    #l_price = price1*0.97
+    #res = await hyperliquid.create_order("UBTC/USDC", 'buy', amount1, price=l_price)
+    #print(res)
     return
     
     while False:

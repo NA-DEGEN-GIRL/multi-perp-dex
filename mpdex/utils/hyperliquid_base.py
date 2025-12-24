@@ -31,7 +31,6 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
     Hyperliquid 계열 공통 베이스.
     서브클래스는 _make_signed_payload()를 오버라이드하여 서명 방식을 정의.
     """
-
     def __init__(
         self,
         wallet_address: Optional[str] = None,
@@ -254,14 +253,82 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         for k in self.spot_asset_pair_to_index:
             self.available_symbols['spot'].append(k)
 
-    async def transfer_to_spot(self, amount):
-        print("미구현")
-        return
+    async def _make_transfer_payload(self, action: dict) -> dict:
+        """
+        usdClassTransfer 전용 서명 payload 생성.
+        - sign_user_signed_action 사용 (sign_l1_action 아님)
+        - 서브클래스에서 오버라이드 가능
+        """
+        raise NotImplementedError("Subclass must implement _make_transfer_payload for usdClassTransfer")
 
-    async def transfer_to_perp(self, amount):
-        print("미구현")
-        return
+    async def transfer_to_spot(self, amount, *, prefer_ws: bool = True, timeout: float = 5.0):
+        """
+        Perp 지갑 → Spot 지갑으로 USDC 전송.
+        - toPerp: false
+        """
+        coll_coin = "USDC"
+        amount = float(amount)
 
+        # 잔고 확인
+        res = await self.get_collateral()
+        available = res.get("available_collateral") or 0
+        if amount > available:
+            return {"status": "error", "message": f"insufficient perp balance: available={available} {coll_coin}, requested={amount}"}
+
+        # 액션 생성 (signatureChainId, hyperliquidChain은 서명 함수에서 삽입됨)
+        nonce = int(time.time() * 1000)
+        action = {
+            "type": "usdClassTransfer",
+            "amount": str(amount),
+            "toPerp": False,  # perp → spot
+            "nonce": nonce,
+            # signatureChainId, hyperliquidChain은 sign_user_signed_action에서 삽입됨
+        }
+
+        # [CHANGED] transfer 전용 서명 사용
+        payload = await self._make_transfer_payload(action)
+        try:
+            resp = await self._send_action(payload, prefer_ws=prefer_ws, timeout=timeout)
+            return resp
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    async def transfer_to_perp(self, amount, *, prefer_ws: bool = True, timeout: float = 5.0):
+        """
+        Spot 지갑 → Perp 지갑으로 USDC 전송.
+        - toPerp: true
+        """
+        coll_coin = "USDC"
+        amount = float(amount)
+        
+        # 잔고 확인
+        res = await self.get_spot_balance(coll_coin)
+        available = (res.get(coll_coin) or res.get(coll_coin.upper()) or {}).get("available", 0)
+        if amount > available:
+            return {"status": "error", "message": f"insufficient spot balance: available={available} {coll_coin}, requested={amount}"}
+
+        amount = str(amount)
+        if self.vault_address:
+            str_amount += f" subaccount:{self.vault_address}"
+
+        # 액션 생성
+        nonce = int(time.time() * 1000)
+        action = {
+            "type": "usdClassTransfer",
+            "amount": str(amount),
+            "toPerp": True,  # spot → perp
+            "nonce": nonce,
+            # signatureChainId, hyperliquidChain은 sign_user_signed_action에서 삽입됨
+        }
+
+        # transfer 전용 서명 사용
+        payload = await self._make_transfer_payload(action)
+        try:
+            resp = await self._send_action(payload, prefer_ws=prefer_ws, timeout=timeout)
+            return resp
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+        
     async def _create_ws_client(self):
         if self.ws_client is not None:
             return
