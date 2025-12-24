@@ -27,8 +27,8 @@ async def main():
     available_symbols = await lighter.get_available_symbols()
     print(available_symbols)
     
-    price = await lighter.get_mark_price('ETH')
-    print(price)
+    #price = await lighter.get_mark_price('ETH')
+    #print(price)
 
     #res = await lighter.create_order(symbol, 'buy', 0.01, price=2500)
     #print(res)
@@ -37,8 +37,24 @@ async def main():
     coll = await lighter.get_collateral()
     print(coll)
     
-    res = await lighter.get_spot_balance('ETH')
+    #res = await lighter.get_spot_balance('ETH')
+    #print(res)
+
+    res = await lighter.transfer_to_spot(1)
     print(res)
+    await asyncio.sleep(1.5)
+
+    coll = await lighter.get_collateral()
+    print(coll)
+    await asyncio.sleep(1.5)
+
+    res = await lighter.transfer_to_perp(1)
+    print(res)
+    await asyncio.sleep(1.5)
+
+    coll = await lighter.get_collateral()
+    print(coll)
+    await asyncio.sleep(1.5)
     return
     await asyncio.sleep(0.1)
     

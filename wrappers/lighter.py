@@ -10,18 +10,24 @@ import logging
 STABLES = ['USDC']
 
 class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
-    def __init__(self, account_id, private_key, api_key_id, l1_address):
+    def __init__(self, account_id, private_key, api_key_id, l1_address, l1_private_key=None):
         super().__init__()
         logging.getLogger().setLevel(logging.WARNING)
         self.url = "https://mainnet.zklighter.elliot.ai"
         # self.chain_id = 304 # no need anymore
-        self.client = SignerClient(url=self.url, api_private_keys={api_key_id: private_key}, account_index=account_id)
+        self.client = SignerClient(
+            url=self.url, 
+            api_private_keys={api_key_id: private_key}, 
+            account_index=account_id
+        )
         #self.apiAccount = AccountApi(self.client.api_client)
         self.apiOrder = OrderApi(self.client.api_client)
         self.market_info = {}
         self._cached_auth_token = None
         self._auth_expiry_ts = 0
         self.l1_address = l1_address
+        # you don't need pk to transfer USDC perp <-> spot, just toss dummy pk
+        self.dummy_pk = "0x0000000000000000000000000000000000000000000000000000000000000001"
         self.has_spot = True
         self.spot_balance = {}
         self._collateral_cache: dict | None = None
@@ -98,13 +104,103 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         await self.client.close()
     
 
+    def _ensure_l1_private_key(self):
+        """transfer에 필요한 L1 private key 확인"""
+        if not self.l1_private_key:
+            raise RuntimeError(
+                "l1_private_key가 필요합니다: "
+                "Lighter transfer는 L1 wallet 서명이 필요합니다."
+            )
+        # 0x 접두어 제거 (SDK가 알아서 처리하지만 일관성을 위해)
+        priv = self.l1_private_key
+        if priv.startswith("0x"):
+            priv = priv[2:]
+        return priv
+
     async def transfer_to_spot(self, amount):
-        print("미구현")
-        return
+        """
+        Perp 지갑 → Spot 지갑으로 USDC 전송.
+        - route_from: ROUTE_PERP
+        - route_to: ROUTE_SPOT
+        """
+        coll_coin = "USDC"
+        amount = float(amount)
+
+        # 잔고 확인
+        res = await self.get_collateral()
+        available = res.get("available_collateral") or 0
+        if amount > available:
+            return {
+                "status": "error",
+                "message": f"insufficient perp balance: available={available} {coll_coin}, requested={amount}"
+            }
+
+        try:
+            transfer_tx, response, err = await self.client.transfer(
+                self.dummy_pk,
+                to_account_index=self.client.account_index,
+                asset_id=self.client.ASSET_ID_USDC,
+                amount=amount,  # SDK가 decimals 처리
+                route_from=self.client.ROUTE_PERP,
+                route_to=self.client.ROUTE_SPOT,
+                fee=0,
+                memo="0x" + "00" * 32,
+            )
+
+            if err is not None:
+                return {"status": "error", "message": str(err)}
+
+            return {
+                "status": "ok",
+                #"tx_hash": transfer_tx,
+                "tx_hash": response.tx_hash,
+            }
+
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     async def transfer_to_perp(self, amount):
-        print("미구현")
-        return
+        """
+        Spot 지갑 → Perp 지갑으로 USDC 전송.
+        - route_from: ROUTE_SPOT
+        - route_to: ROUTE_PERP
+        """
+        coll_coin = "USDC"
+        amount = float(amount)
+
+        # 잔고 확인
+        res = await self.get_spot_balance(coll_coin)
+        balance_info = res.get(coll_coin) or res.get(coll_coin.upper()) or {}
+        available = balance_info.get("available", 0)
+        if amount > available:
+            return {
+                "status": "error",
+                "message": f"insufficient spot balance: available={available} {coll_coin}, requested={amount}"
+            }
+
+        try:
+            transfer_tx, response, err = await self.client.transfer(
+                self.dummy_pk,
+                to_account_index=self.client.account_index,
+                asset_id=self.client.ASSET_ID_USDC,
+                amount=amount,  # SDK가 decimals 처리
+                route_from=self.client.ROUTE_SPOT,
+                route_to=self.client.ROUTE_PERP,
+                fee=0,
+                memo="0x" + "00" * 32,
+            )
+
+            if err is not None:
+                return {"status": "error", "message": str(err)}
+
+            return {
+                "status": "ok",
+                #"tx_hash": transfer_tx,
+                "tx_hash": response.tx_hash,
+            }
+
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
     
     async def get_mark_price(self, symbol):
         m_info = self.market_info[symbol]
