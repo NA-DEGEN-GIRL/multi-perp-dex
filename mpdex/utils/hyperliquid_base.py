@@ -931,3 +931,49 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         normalized = [self._normalize_open_order_rest(o) for o in raw if isinstance(o, dict)]
         sym = symbol.upper().strip()
         return [o for o in normalized if o and o["symbol"] == sym] or None
+
+    # -------------------- [ADDED] Orderbook 기능 --------------------
+    async def subscribe_orderbook(self, symbol: str) -> None:
+        """
+        특정 심볼의 오더북(l2Book) 구독 시작.
+        - WS 모드가 아니어도 WS 클라이언트를 생성하여 구독.
+        - Spot은 'BASE/QUOTE' 형식, Perp는 'BTC' 형식.
+        """
+        if not self.ws_client:
+            await self._create_ws_client()
+        await self.ws_client.subscribe_orderbook(symbol)
+
+    async def unsubscribe_orderbook(self, symbol: str) -> bool:
+        """
+        오더북 구독 해제.
+        """
+        if not self.ws_client:
+            return True
+        return await self.ws_client.unsubscribe_orderbook(symbol)
+
+    async def get_orderbook(self, symbol: str, timeout: float = 5.0) -> Optional[Dict[str, Any]]:
+        """
+        오더북 조회.
+        - 아직 구독 중이 아니면 자동으로 구독 후 첫 스냅샷까지 대기.
+        - 반환 형식:
+          {
+            "bids": [[price, size, n], ...],  # 가격 내림차순
+            "asks": [[price, size, n], ...],  # 가격 오름차순
+            "time": int
+          }
+        """
+        if not self.ws_client:
+            await self._create_ws_client()
+
+        # 구독 확인 및 시작
+        coin = self.ws_client._resolve_coin_for_orderbook(symbol)
+        #print(coin)
+        if coin not in self.ws_client._orderbook_subs:
+            await self.ws_client.subscribe_orderbook(symbol)
+
+        # 첫 스냅샷 대기
+        ready = await self.ws_client.wait_orderbook_ready(symbol, timeout=timeout)
+        if not ready:
+            return None
+
+        return self.ws_client.get_orderbook(symbol)

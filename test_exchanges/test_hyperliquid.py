@@ -29,6 +29,16 @@ async def main():
     hyperliquid = await create_exchange('hyperliquid',HYPERLIQUID_KEY)
     await asyncio.sleep(0.2)
     
+    while True:
+        res = await hyperliquid.get_orderbook('UBTC/USDC')
+        print(res)
+        await asyncio.sleep(0.01)
+
+    res2 = await hyperliquid.unsubscribe_orderbook('UBTC/USDC')
+    print(res2)
+    await asyncio.sleep(0.2)
+    return
+
     # superstack test
     #superstack = await create_exchange('superstack',SUPERSTACK_KEY)
     #await asyncio.sleep(0.2)

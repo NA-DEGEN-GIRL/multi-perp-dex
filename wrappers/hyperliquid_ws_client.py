@@ -153,6 +153,11 @@ class HLWSClientRaw:
         self._send_lock = asyncio.Lock()
         self._active_subs: set[str] = set()
         self._price_events: Dict[str, asyncio.Event] = {}
+
+        # [ADDED] Orderbook 캐시: coin(upper) -> {"bids": [...], "asks": [...], "time": int}
+        self._orderbooks: Dict[str, Dict[str, Any]] = {}
+        self._orderbook_events: Dict[str, asyncio.Event] = {}  # coin -> Event (첫 스냅샷 대기용)
+        self._orderbook_subs: set[str] = set()  # 구독 중인 coin 집합 (WS coin 표기: 예: "@142", "BTC")
     
     def user_count(self) -> int:
         return len(self._user_subs)
@@ -635,6 +640,12 @@ class HLWSClientRaw:
                 await self._send_subscribe(sub)
                 ws_logger.info(f"RESUB(user) -> {json_dumps({'method':'subscribe','subscription':sub})}")
 
+        # [ADDED] 4) 오더북 재구독
+        for coin in list(self._orderbook_subs):
+            sub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
+            await self._send_subscribe(sub)
+            ws_logger.info(f"RESUB(orderbook) -> {json_dumps({'method':'subscribe','subscription':sub})}")
+
     # ---------------------- 루프/콜백 ----------------------
 
     async def _ping_loop(self) -> None:
@@ -710,6 +721,11 @@ class HLWSClientRaw:
         
         if ch == "pong":
             ws_logger.debug("received pong")
+            return
+
+        # [ADDED] l2Book 채널 처리
+        if ch == "l2Book":
+            self._handle_l2book(msg)
             return
         
         if ch == "post":
@@ -912,6 +928,182 @@ class HLWSClientRaw:
     def get_price(self, symbol: str) -> Optional[float]:
         """Perp/일반 심볼 가격 조회(캐시)."""
         return self.prices.get(symbol.upper())
+
+    # -------------------- [ADDED] Orderbook 기능 --------------------
+    def _normalize_symbol_key(self, symbol: str) -> str:
+        """
+        심볼을 내부 캐시 키로 정규화.
+        - 'BASE/QUOTE' → 'BASE/QUOTE' (대문자)
+        - 'dex:COIN' → 'dex:COIN' (dex 소문자, coin 대문자)
+        - 'BTC' → 'BTC' (대문자)
+        """
+        s = str(symbol).strip()
+        if "/" in s:
+            return s.upper()
+        if ":" in s:
+            parts = s.split(":", 1)
+            return f"{parts[0].lower()}:{parts[1].upper()}"
+        return s.upper()
+
+    def _resolve_coin_for_orderbook(self, symbol: str) -> str:
+        """
+        심볼 → WS 구독에 사용할 coin 키 반환.
+        - Spot 'BASE/QUOTE' → '@{pairIdx}'
+        - Perp 'dex:COIN' (예: 'hyna:BTC', 'HYNA:BTC') → 'hyna:BTC' (dex 소문자, coin 대문자)
+        - Perp 'BTC' → 'BTC'
+        """
+        s = str(symbol).strip()
+        
+        # 1) Spot 페어 'BASE/QUOTE' → '@{pairIdx}'
+        if "/" in s:
+            s_upper = s.upper()
+            idx = self.spot_asset_index_to_pair
+            for pair_idx, pair_name in idx.items():
+                if pair_name.upper() == s_upper:
+                    return f"@{pair_idx}"
+            # 매핑 실패 → 그대로 반환(서버에서 에러 반환됨)
+            return s_upper
+        
+        # 2) Perp 'dex:COIN' 형태 (예: 'hyna:BTC', 'HYNA:BTC') → 'dex:COIN' (dex 소문자, coin 대문자)
+        if ":" in s:
+            parts = s.split(":", 1)
+            dex_part = parts[0].lower()   # dex는 소문자
+            coin_part = parts[1].upper()  # coin은 대문자
+            return f"{dex_part}:{coin_part}"
+        
+        # 3) 일반 Perp 'BTC' → 'BTC'
+        return s.upper()
+
+    async def subscribe_orderbook(self, symbol: str) -> None:
+        """
+        특정 심볼의 l2Book 구독.
+        - 이미 구독 중이면 무시.
+        - 구독 메시지: {"method":"subscribe","subscription":{"type":"l2Book","coin":"<coin>","nSigFigs":null}}
+        """
+        coin = self._resolve_coin_for_orderbook(symbol)
+        if coin in self._orderbook_subs:
+            return
+        sub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
+        await self._send_subscribe(sub)
+        self._orderbook_subs.add(coin)
+        # 대기 이벤트 준비 (정규화된 키 사용)
+        norm_key = self._normalize_symbol_key(symbol)
+        if norm_key not in self._orderbook_events:
+            self._orderbook_events[norm_key] = asyncio.Event()
+
+    async def unsubscribe_orderbook(self, symbol: str) -> bool:
+        """
+        l2Book 구독 해제.
+        - {"method":"unsubscribe","subscription":{"type":"l2Book","coin":"<coin>","nSigFigs":null}}
+        """
+        try:
+            coin = self._resolve_coin_for_orderbook(symbol)
+            if coin not in self._orderbook_subs:
+                return True
+            if not self.conn:
+                return True
+            unsub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
+            msg = {"method": "unsubscribe", "subscription": unsub}
+            async with self._send_lock:
+                await self.conn.send(json_dumps(msg))
+            self._orderbook_subs.discard(coin)
+            # 캐시/이벤트 정리 (정규화된 키 사용)
+            norm_key = self._normalize_symbol_key(symbol)
+            self._orderbooks.pop(norm_key, None)
+            self._orderbook_events.pop(norm_key, None)
+            # active_subs에서도 제거
+            sub_key = _sub_key(unsub)
+            self._active_subs.discard(sub_key)
+            return True
+        except Exception as e:
+            ws_logger.error(f"unsubscribe_orderbook error: {e}")
+            print(f"unsubscribe_orderbook error: {e}")
+            return False
+
+    def get_orderbook(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        캐시된 오더북 반환.
+        반환 형식: {"bids": [[price, size, n], ...], "asks": [[price, size, n], ...], "time": int}
+        - bids: 가격 내림차순 (최고 매수가 먼저)
+        - asks: 가격 오름차순 (최저 매도가 먼저)
+        """
+        norm_key = self._normalize_symbol_key(symbol)
+        return self._orderbooks.get(norm_key)
+
+    async def wait_orderbook_ready(self, symbol: str, timeout: float = 5.0) -> bool:
+        """첫 오더북 스냅샷 대기."""
+        norm_key = self._normalize_symbol_key(symbol)
+        ev = self._orderbook_events.get(norm_key)
+        if ev is None:
+            ev = asyncio.Event()
+            self._orderbook_events[norm_key] = ev
+        if ev.is_set():
+            return True
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    def _handle_l2book(self, msg: Dict[str, Any]) -> None:
+        """
+        l2Book 채널 메시지 처리.
+        예시 data: {"coin": "@142", "time": 1767022392394, "levels": [[bids...], [asks...]]}
+        levels[0] = bids (첫 번째가 최고 매수가), levels[1] = asks (첫 번째가 최저 매도가)
+        """
+        data = msg.get("data") or {}
+        coin_raw = str(data.get("coin") or "")
+        levels = data.get("levels") or []
+        ts = data.get("time")
+
+        if not coin_raw or len(levels) < 2:
+            return
+
+        # coin_raw → 정규화 키 (symbol)
+        if coin_raw.startswith("@"):
+            # Spot: '@{pairIdx}' → 'BASE/QUOTE'
+            try:
+                pair_idx = int(coin_raw[1:])
+            except Exception:
+                return
+            pair_name = self.spot_asset_index_to_pair.get(pair_idx)
+            if not pair_name:
+                return
+            norm_key = pair_name.upper()
+        elif ":" in coin_raw:
+            # Perp with dex: 'hyna:BTC' → 'hyna:BTC' (dex 소문자, coin 대문자)
+            parts = coin_raw.split(":", 1)
+            norm_key = f"{parts[0].lower()}:{parts[1].upper()}"
+        else:
+            # 일반 Perp: 'BTC' → 'BTC'
+            norm_key = coin_raw.upper()
+
+        # levels 파싱: [[{px, sz, n}, ...], [{px, sz, n}, ...]]
+        def parse_level(lvl_list: List[Dict[str, Any]]) -> List[List]:
+            result = []
+            for item in lvl_list:
+                try:
+                    px = float(item.get("px") or 0)
+                    sz = float(item.get("sz") or 0)
+                    n = int(item.get("n") or 0)
+                    result.append([px, sz, n])
+                except Exception:
+                    continue
+            return result
+
+        bids = parse_level(levels[0])
+        asks = parse_level(levels[1])
+
+        self._orderbooks[norm_key] = {
+            "bids": bids,
+            "asks": asks,
+            "time": ts,
+        }
+
+        # 이벤트 시그널
+        ev = self._orderbook_events.get(norm_key)
+        if ev and not ev.is_set():
+            ev.set()
 
 class HLWSClientPool:
     USER_SUB_LIMIT = 10  # [ADDED] 유저별 구독 최대치
