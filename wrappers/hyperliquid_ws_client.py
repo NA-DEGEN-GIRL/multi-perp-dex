@@ -1014,6 +1014,8 @@ class HLWSClientRaw:
             # active_subs에서도 제거
             sub_key = _sub_key(unsub)
             self._active_subs.discard(sub_key)
+            # 서버 처리 대기 (빠른 재구독 시 문제 방지)
+            await asyncio.sleep(0.1)
             return True
         except Exception as e:
             ws_logger.error(f"unsubscribe_orderbook error: {e}")

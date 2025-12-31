@@ -30,7 +30,7 @@ async def main():
     await asyncio.sleep(0.2)
     
     while True:
-        res = await hyperliquid.get_orderbook('UBTC/USDC')
+        res = await hyperliquid.get_orderbook('xyz:XYZ100')
         print(res)
         await asyncio.sleep(0.01)
 
