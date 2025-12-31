@@ -159,8 +159,8 @@ class TreadfiPcExchange(MultiPerpDexMixin, MultiPerpDex):
         self.available_symbols['perp'] = []
         for sym in self._symbol_list:
             quote = self.get_perp_quote(sym)
-            # TreadFi.Pacifica format: BTC:PERP-USDC
-            composite_symbol = f"{sym}:PERP-{quote}"
+            # Just same as pacifica
+            composite_symbol = f"{sym}-{quote}"
             self.available_symbols['perp'].append(composite_symbol)
 
     async def _create_ws_client(self):

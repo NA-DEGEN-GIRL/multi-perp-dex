@@ -17,7 +17,7 @@ async def main():
     treadfi_hl = await create_exchange('treadfi.hyperliquid',TREADFIHL_KEY)
     
     quote = treadfi_hl.get_perp_quote(coin)
-    symbol = symbol_create('treadfi.hyperliquid', coin, quote=quote) # only perp atm
+    symbol = symbol_create('treadfi.hyperliquid', coin, quote=quote)
     print("account_name:", treadfi_hl.account_name, "\naccount_id:", treadfi_hl.account_id)
     
     price = await treadfi_hl.get_mark_price(symbol) #,is_spot=is_spot)
