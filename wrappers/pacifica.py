@@ -75,7 +75,7 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
             await self._http.close()
     
     def get_perp_quote(self, symbol, *, is_basic_coll=False):
-        return 'USD'
+        return 'USDC'
     
     async def init(self) -> "PacificaExchange":
         """
