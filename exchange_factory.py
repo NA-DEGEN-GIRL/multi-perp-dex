@@ -117,8 +117,8 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
             evm_private_key = getattr(key_params, 'evm_private_key', None),
             session_token = getattr(key_params, 'session_token', None),
         ).init(
-            login_port = getattr(key_params, 'login_port', None),
-            open_browser = getattr(key_params, 'open_browser', True),
+            login_port = getattr(key_params, 'login_port', 6969),
+            open_browser = getattr(key_params, 'open_browser', False),
         )
 
     else:
