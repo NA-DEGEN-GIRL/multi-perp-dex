@@ -8,6 +8,7 @@ def _load(exchange_platform: str):  # [ADDED] 필요한 경우에만 모듈 로�
         "grvt": ("wrappers.grvt", "GrvtExchange"),
         "backpack": ("wrappers.backpack", "BackpackExchange"),
         "treadfi.hyperliquid": ("wrappers.treadfi_hl", "TreadfiHlExchange"),
+        "treadfi.pacifica": ("wrappers.treadfi_pc", "TreadfiPcExchange"),
         "variational": ("wrappers.variational", "VariationalExchange"),
         "pacifica": ("wrappers.pacifica", "PacificaExchange"),
         "hyperliquid": ("wrappers.hyperliquid","HyperliquidExchange"),
@@ -62,16 +63,26 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
     
     elif exchange_platform == "treadfi.hyperliquid":
         return await Ex(
-            key_params.session_cookies, 
-            key_params.login_wallet_address, 
-            key_params.login_wallet_private_key, 
-            key_params.trading_wallet_address, 
-            key_params.account_name, 
+            key_params.session_cookies,
+            key_params.login_wallet_address,
+            key_params.login_wallet_private_key,
+            key_params.trading_wallet_address,
+            key_params.account_name,
             key_params.fetch_by_ws,
             getattr(key_params,'trading_wallet_private_key',None),
             key_params.options if hasattr(key_params,"options") else None
             ).init()
-    
+
+    elif exchange_platform == "treadfi.pacifica":
+        return await Ex(
+            session_cookies=getattr(key_params, 'session_cookies', None),
+            login_wallet_address=getattr(key_params, 'login_wallet_address', None),
+            login_wallet_private_key=getattr(key_params, 'login_wallet_private_key', None),
+            account_name=key_params.account_name,
+            pacifica_public_key=getattr(key_params, 'pacifica_public_key', None),
+            fetch_by_ws=getattr(key_params, 'fetch_by_ws', True),
+            ).init()
+
     elif exchange_platform == "variational":
         return await Ex(
             key_params.evm_wallet_address, 
@@ -135,6 +146,7 @@ SYMBOL_FORMATS = {
         if ":" in coin 
         else f"{coin.upper()}:PERP-{q or 'USDC'}"
     ),
+    "treadfi.pacifica": lambda coin, q=None: f"{coin.upper()}:PERP-{q or 'USDC'}",
     "variational": lambda coin, q=None: coin.upper(), # same
     "pacifica": lambda coin, q=None: coin.upper(), # same
     "hyperliquid": lambda coin, q=None: coin.upper(), # use internal mapping
