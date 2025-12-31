@@ -102,6 +102,70 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             jwt_token=self._auth.token,
         )
 
+    async def _reauth(self) -> bool:
+        """Re-authenticate when token expires"""
+        print("[standx] token expired, re-authenticating...")
+        try:
+            self._auth._token = None
+            self._auth._logged_in = False
+            await self._auth.login()
+
+            # Update WS client token if exists
+            if self.ws_client:
+                self.ws_client.jwt_token = self._auth.token
+                self.ws_client._authenticated = False
+                if self.ws_client._ws and self.ws_client._running:
+                    await self.ws_client.authenticate(self._auth.token)
+
+            print("[standx] re-authentication successful")
+            return True
+        except Exception as e:
+            print(f"[standx] re-authentication failed: {e}")
+            return False
+
+    async def _auth_get(self, url: str, params: Optional[Dict] = None, headers: Optional[Dict] = None) -> aiohttp.ClientResponse:
+        """GET request with auto re-auth on 401/403"""
+        if headers is None:
+            headers = {}
+        headers.update(self._auth.get_auth_headers())
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status in (401, 403):
+                    if await self._reauth():
+                        headers.update(self._auth.get_auth_headers())
+                        async with session.get(url, headers=headers, params=params) as retry_resp:
+                            return await self._handle_response(retry_resp)
+                return await self._handle_response(resp)
+
+    async def _auth_post(self, url: str, data: Optional[str] = None, headers: Optional[Dict] = None) -> Dict[str, Any]:
+        """POST request with auto re-auth on 401/403"""
+        if headers is None:
+            headers = {}
+        headers.update(self._auth.get_auth_headers())
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
+            async with session.post(url, data=data, headers=headers) as resp:
+                if resp.status in (401, 403):
+                    if await self._reauth():
+                        # Re-sign the request if needed
+                        if data and "x-request-signature" in headers:
+                            headers.update(self._auth.sign_request(data))
+                        headers.update(self._auth.get_auth_headers())
+                        async with session.post(url, data=data, headers=headers) as retry_resp:
+                            return await self._handle_response(retry_resp)
+                return await self._handle_response(resp)
+
+    async def _handle_response(self, resp: aiohttp.ClientResponse) -> Dict[str, Any]:
+        """Handle response and return JSON"""
+        text = await resp.text()
+        if resp.status != 200:
+            raise RuntimeError(f"Request failed: {resp.status} {text}")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return {"raw": text}
+
     async def close(self):
         """Cleanup (no persistent session to close)"""
         pass
@@ -231,15 +295,8 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
     async def get_collateral_rest(self) -> Dict[str, Any]:
         """GET /api/query_balance"""
         url = f"{STANDX_PERPS_BASE}/api/query_balance"
-        headers = self._auth.get_auth_headers()
-
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise RuntimeError(f"query_balance failed: {resp.status} {text}")
-                data = await resp.json()
-                return self._parse_collateral(data)
+        data = await self._auth_get(url)
+        return self._parse_collateral(data)
 
     def _parse_collateral(self, data: Dict) -> Dict[str, Any]:
         """Parse balance response"""
@@ -291,20 +348,13 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
     async def get_position_rest(self, symbol: str) -> Optional[Dict[str, Any]]:
         """GET /api/query_positions"""
         url = f"{STANDX_PERPS_BASE}/api/query_positions"
-        headers = self._auth.get_auth_headers()
         params = {"symbol": symbol}
+        positions = await self._auth_get(url, params=params)
 
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
-            async with session.get(url, headers=headers, params=params) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise RuntimeError(f"query_positions failed: {resp.status} {text}")
-                positions = await resp.json()
-
-                for pos in positions:
-                    if pos.get("symbol") == symbol and pos.get("status") == "open":
-                        return self._parse_position(pos)
-                return None
+        for pos in positions:
+            if pos.get("symbol") == symbol and pos.get("status") == "open":
+                return self._parse_position(pos)
+        return None
 
     def _parse_position(self, pos: Dict) -> Dict[str, Any]:
         """Parse position response"""
@@ -446,19 +496,10 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         GET /api/query_open_orders
         """
         url = f"{STANDX_PERPS_BASE}/api/query_open_orders"
-        headers = self._auth.get_auth_headers()
-        params = {}
-        if symbol:
-            params["symbol"] = symbol
-
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
-            async with session.get(url, headers=headers, params=params) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise RuntimeError(f"query_open_orders failed: {resp.status} {text}")
-                data = await resp.json()
-                orders = data.get("result", [])
-                return [self._parse_order(o) for o in orders]
+        params = {"symbol": symbol} if symbol else {}
+        data = await self._auth_get(url, params=params)
+        orders = data.get("result", [])
+        return [self._parse_order(o) for o in orders]
 
     def _parse_order(self, order: Dict) -> Dict[str, Any]:
         """Parse order response"""
@@ -529,15 +570,8 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
     async def get_position_config(self, symbol: str) -> Dict[str, Any]:
         """GET /api/query_position_config"""
         url = f"{STANDX_PERPS_BASE}/api/query_position_config"
-        headers = self._auth.get_auth_headers()
         params = {"symbol": symbol}
-
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
-            async with session.get(url, headers=headers, params=params) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise RuntimeError(f"query_position_config failed: {resp.status} {text}")
-                return await resp.json()
+        return await self._auth_get(url, params=params)
 
     # ----------------------------
     # Market Data
@@ -654,24 +688,17 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
     async def get_trades(self, symbol: Optional[str] = None, limit: int = 100) -> List[Dict]:
         """GET /api/query_trades"""
         url = f"{STANDX_PERPS_BASE}/api/query_trades"
-        headers = self._auth.get_auth_headers()
         params = {"limit": limit}
         if symbol:
             params["symbol"] = symbol
-
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
-            async with session.get(url, headers=headers, params=params) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise RuntimeError(f"query_trades failed: {resp.status} {text}")
-                data = await resp.json()
-                return data.get("result", [])
+        data = await self._auth_get(url, params=params)
+        return data.get("result", [])
 
     # ----------------------------
     # Internal Helpers
     # ----------------------------
     async def _post_signed(self, endpoint: str, payload: Dict) -> Dict[str, Any]:
-        """POST request with body signature"""
+        """POST request with body signature and auto re-auth on 401/403"""
         url = f"{STANDX_PERPS_BASE}{endpoint}"
         payload_str = json.dumps(payload, separators=(",", ":"))
 
@@ -684,8 +711,26 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
 
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
             async with session.post(url, data=payload_str, headers=headers) as resp:
-                # Read text first (can only read body once)
                 text = await resp.text()
+
+                # Re-auth on 401/403
+                if resp.status in (401, 403):
+                    if await self._reauth():
+                        # Re-sign with new auth
+                        headers = {
+                            "Content-Type": "application/json",
+                            **self._auth.get_auth_headers(),
+                            **self._auth.sign_request(payload_str),
+                        }
+                        async with session.post(url, data=payload_str, headers=headers) as retry_resp:
+                            retry_text = await retry_resp.text()
+                            if retry_resp.status != 200:
+                                raise RuntimeError(f"{endpoint} failed: {retry_resp.status} {retry_text}")
+                            try:
+                                return json.loads(retry_text)
+                            except json.JSONDecodeError:
+                                return {"raw": retry_text}
+
                 if resp.status != 200:
                     raise RuntimeError(f"{endpoint} failed: {resp.status} {text}")
                 try:
