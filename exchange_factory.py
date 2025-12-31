@@ -12,6 +12,7 @@ def _load(exchange_platform: str):  # [ADDED] 필요한 경우에만 모듈 로�
         "pacifica": ("wrappers.pacifica", "PacificaExchange"),
         "hyperliquid": ("wrappers.hyperliquid","HyperliquidExchange"),
         "superstack": ("wrappers.superstack","SuperstackExchange"),
+        "standx": ("wrappers.standx", "StandXExchange"),
     }
     try:
         mod, cls = mapping[exchange_platform]
@@ -108,7 +109,18 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
             builder_fee_pair = key_params.builder_fee_pair,
             FrontendMarket = key_params.FrontendMarket
         ).init()
-    
+
+    elif exchange_platform == "standx":
+        return await Ex(
+            wallet_address = key_params.wallet_address,
+            chain = getattr(key_params, 'chain', 'bsc'),
+            evm_private_key = getattr(key_params, 'evm_private_key', None),
+            session_token = getattr(key_params, 'session_token', None),
+        ).init(
+            login_port = getattr(key_params, 'login_port', None),
+            open_browser = getattr(key_params, 'open_browser', True),
+        )
+
     else:
         raise ValueError(f"Unsupported exchange: {exchange_platform}")
 
@@ -127,6 +139,7 @@ SYMBOL_FORMATS = {
     "pacifica": lambda coin, q=None: coin.upper(), # same
     "hyperliquid": lambda coin, q=None: coin.upper(), # use internal mapping
     "superstack": lambda coin, q=None: coin.upper(), # use internal mapping
+    "standx": lambda coin, q=None: f"{coin.upper()}-USD",  # BTC-USD
 }
 
 SPOT_SYMBOL_FORMATS = {

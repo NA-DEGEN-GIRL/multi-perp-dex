@@ -26,6 +26,7 @@ def __getattr__(name):
         "VariationalExchange": ("wrappers.variational","VariationalExchange"),
         "PacificaExchange": ("wrappers.pacifica","PacificaExchange"),
         "HyperliquidExchange": ("wrappers.hyperliquid","HyperliquidExchange"),
+        "StandXExchange": ("wrappers.standx", "StandXExchange"),
     }
     if name in mapping:
         mod, attr = mapping[name]
@@ -37,5 +38,5 @@ __all__ = [  # 공개 심볼 명시
     "MultiPerpDex", "MultiPerpDexMixin",
     "create_exchange", "symbol_create",
     "LighterExchange", "BackpackExchange", "EdgexExchange", "GrvtExchange", "ParadexExchange", "TreadfiHlExchange",
-    "VariationalExchange", "PacificaExchange"
+    "VariationalExchange", "PacificaExchange", "HyperliquidExchange", "StandXExchange"
 ]
