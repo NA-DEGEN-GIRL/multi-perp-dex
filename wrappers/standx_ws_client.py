@@ -281,6 +281,10 @@ class StandXWSClient:
         asks = parse_levels(data.get("asks", []))
         bids = parse_levels(data.get("bids", []))
 
+        # 표준 정렬: asks 오름차순, bids 내림차순
+        asks.sort(key=lambda x: x[0])
+        bids.sort(key=lambda x: x[0], reverse=True)
+
         return {
             "asks": asks,
             "bids": bids,
