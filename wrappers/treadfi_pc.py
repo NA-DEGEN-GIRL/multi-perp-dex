@@ -946,7 +946,8 @@ alert('Signing/Submit failed: ' + e.message);
                     "id": o.get("id"),
                     "pair": o.get("pair"),
                     "side": (o.get("side") or "").lower() or None,
-                    "limit_price": o.get("limit_price"),
+                    "limit": o.get("limit_price"),
+                    "size": o.get("target_order_qty"),
                 })
 
         return results

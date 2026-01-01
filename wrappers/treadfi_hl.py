@@ -734,13 +734,14 @@ alert('Signing/Submit failed: ' + e.message);
 			acc_names = o.get("account_names") or []
 			if self.account_name and self.account_name not in acc_names:
 				continue
-
+			
 			if o.get("limit_price"): # only if there is limit_price info
 				results.append({
 					"id": o.get("id"),
 					"pair": o.get("pair"),
 					"side": (o.get("side") or "").lower() or None,
-					"limit_price": o.get("limit_price"),  # 문자열 또는 None
+					"price": o.get("limit_price"),  # 문자열 또는 None
+					"size": o.get("target_order_qty"),
 				})
 
 		return results

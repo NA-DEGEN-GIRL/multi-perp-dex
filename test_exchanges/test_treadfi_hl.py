@@ -9,7 +9,7 @@ from keys.pk_treadfi_hl import TREADFIHL_KEY
 # tread.fi it self can't close a position of small size
 # they will fix it, so it's not a bug in this code
 
-coin = 'hyna:BTC'
+coin = 'BTC'
 amount = 0.002
 
 
@@ -27,10 +27,14 @@ async def main():
     print(res)
     await asyncio.sleep(0.5)
 
+    open_orders = await treadfi_hl.get_open_orders(symbol)
+    if open_orders:
+        print(len(open_orders),open_orders)
+    return
+
     res = await treadfi_hl.create_order(symbol, 'sell', amount)
     print(res)
 
-    return
 
     res = await treadfi_hl.transfer_to_spot(5)
     print(res)
