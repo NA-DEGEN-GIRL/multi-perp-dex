@@ -569,6 +569,7 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         return result
 
     def parse_open_orders(self, orders):
+        """id, symbol, type, side, size, price"""
         if not orders:
             return []
 
@@ -581,7 +582,7 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
                 "id": o.order_index,  # for cancellation
                 "client_order_id": o.client_order_index,
                 "symbol": self._get_symbol_from_market_index(o.market_index),  # 필요 시
-                "quantity": str(o.initial_base_amount),  # Decimal or string
+                "size": str(o.initial_base_amount),  # Decimal or string
                 "price": str(o.price),
                 "side": side,
                 "order_type": o.type,

@@ -898,7 +898,7 @@ alert('Signing/Submit failed: ' + e.message);
                 "symbol": order.get("pair"),
                 "type": (order.get("super_strategy") or "").lower(),
                 "side": (order.get("side") or "").lower(),
-                "amount": order.get("target_order_qty"),
+                "size": order.get("target_order_qty"),
                 "price": order.get("limit_price"),
             })
         return parsed
@@ -944,9 +944,9 @@ alert('Signing/Submit failed: ' + e.message);
             if o.get("limit_price"):
                 results.append({
                     "id": o.get("id"),
-                    "pair": o.get("pair"),
+                    "symbol": o.get("pair"),
                     "side": (o.get("side") or "").lower() or None,
-                    "limit": o.get("limit_price"),
+                    "price": o.get("limit_price"),
                     "size": o.get("target_order_qty"),
                 })
 

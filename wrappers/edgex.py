@@ -424,7 +424,7 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
             {
                 "symbol": self._get_symbol_from_contract_id(o["contractId"]),
                 "id": o["id"],
-                "quantity": o["size"],
+                "size": o["size"],
                 "price": o["price"],
                 "side": o["side"],
                 "order_type": o["type"],

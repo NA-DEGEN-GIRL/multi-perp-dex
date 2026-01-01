@@ -541,8 +541,8 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
                 "symbol": order.get("symbol"),
                 "side": side,
                 "price": order.get("price"),
-                "quantity": order.get("amount"),
-                "filled_quantity": order.get("filled_amount"),
+                "size": order.get("amount"),
+                "filled_size": order.get("filled_amount"),
                 "order_type": order.get("order_type"),
                 "reduce_only": order.get("reduce_only", False),
             })
@@ -570,8 +570,8 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
                     "symbol": symbol,
                     "side": "buy" if pos.get("side")=="bid" else "sell",
                     "price": pos.get("price"),
-                    "quantity":pos.get("initial_amount"),
-                    "filled_quantity":pos.get("filled_amount"),
+                    "size":pos.get("initial_amount"),
+                    "filled_size":pos.get("filled_amount"),
                     "order_type":pos.get("order_type")
                 })
         return results

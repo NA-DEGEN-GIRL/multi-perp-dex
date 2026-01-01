@@ -23,7 +23,12 @@ test_bool = {
 
 async def main():
     lighter = await create_exchange('lighter',LIGHTER_KEY)
+    res = await lighter.get_open_orders('BTC')
+    print(res)
 
+    res = await lighter.cancel_orders('BTC')
+    print(res)
+    return
     #available_symbols = await lighter.get_available_symbols()
     #print(available_symbols)
     

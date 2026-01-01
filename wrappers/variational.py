@@ -207,12 +207,12 @@ def _extract_open_orders_core(payload, coin: str = "all") -> List[dict]:
         if coin.lower() == "all" or (inst.get("underlying") or "").upper() == coin.upper():
             out.append(
                 {
-                    "order_id": o.get("order_id"),
+                    "id": o.get("order_id"),
                     "coin": inst.get("underlying"),
                     "side": (o.get("side") or "").lower() or None,
                     "order_type": order_type or None,
                     "status": (o.get("status") or "").lower() or None,
-                    "qty": _fnum(o.get("qty")),
+                    "size": _fnum(o.get("qty")),
                     "price": price,
                     "rfq_id": o.get("rfq_id"),
                 }

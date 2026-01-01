@@ -77,7 +77,7 @@ class ParadexExchange(MultiPerpDexMixin, MultiPerpDex):
                 "symbol": order.get("symbol"),
                 "type": order.get("type"),
                 "side": order.get("side"),
-                "amount": order.get("amount"),
+                "size": order.get("amount"),
                 "price": order.get("price")
             })
 

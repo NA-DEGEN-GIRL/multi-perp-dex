@@ -60,9 +60,12 @@ class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
             order_type = 'limit'
             
         if order_type == 'market':
-            return self.parse_order(await self.exchange.create_order(symbol, 'market', side, amount, price, params=params))
+            res = await self.exchange.create_order(symbol, 'market', side, amount, price, params=params)
+            return self.parse_order(res)
         
-        return self.parse_order(await self.exchange.create_order(symbol, 'limit', side, amount, price, params=params))
+        res = await self.exchange.create_order(symbol, 'limit', side, amount, price, params=params)
+        
+        return self.parse_order(res)
     
     def parse_position(self, pos):
         entry_price = pos['entry_price']
@@ -117,13 +120,18 @@ class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
         await self.exchange._session.close()
     
     def parse_open_orders(self, orders):
+        """id, symbol, type, side, size, price"""
         if len(orders) == 0:
             return None
         parsed = []
         for order in orders:
+            #print(order)
             order_id = order['order_id']
             symbol = order['legs'][0]['instrument']
-            parsed.append({"order_id": order_id, "symbol": symbol})
+            size = order['legs'][0]['size']
+            price = order['legs'][0]['limit_price']
+            side = 'buy' if order['legs'][0]['is_buying_asset'] else 'sell'
+            parsed.append({"id": order_id, "symbol": symbol, "size": size, "price": price, "side": side})
         return parsed
     
     async def get_open_orders(self, symbol):
@@ -135,7 +143,7 @@ class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
             parsed_orders = await self.get_open_orders(symbol)
         tasks = []
         for item in parsed_orders:
-            order_id = item['order_id']
+            order_id = item['id']
             # symbol is not required actually
             tasks.append(asyncio.create_task(self.exchange.cancel_order(id=order_id)))
         return await asyncio.gather(*tasks, return_exceptions=True)

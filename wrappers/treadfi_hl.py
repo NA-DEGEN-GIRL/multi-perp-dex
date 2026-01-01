@@ -602,7 +602,7 @@ alert('Signing/Submit failed: ' + e.message);
 				"symbol": order.get("pair"),
 				"type": order.get("super_strategy").lower(),
 				"side": order.get("side").lower(),
-				"amount": order.get("target_order_qty"),
+				"size": order.get("target_order_qty"),
 				"price": order.get("limit_price")
 			})
 
@@ -738,7 +738,7 @@ alert('Signing/Submit failed: ' + e.message);
 			if o.get("limit_price"): # only if there is limit_price info
 				results.append({
 					"id": o.get("id"),
-					"pair": o.get("pair"),
+					"symbol": o.get("pair"),
 					"side": (o.get("side") or "").lower() or None,
 					"price": o.get("limit_price"),  # 문자열 또는 None
 					"size": o.get("target_order_qty"),

@@ -181,7 +181,7 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
             {
                 "symbol": o.get("symbol"),
                 "id": o.get("id"),
-                "quantity": o.get("quantity"),
+                "size": o.get("quantity"),
                 "price": o.get("price"),
                 "side": o.get("side"),
                 "order_type": o.get("orderType"),
