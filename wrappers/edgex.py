@@ -442,9 +442,13 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
     async def cancel_orders(self, symbol, open_orders = None):
         if open_orders is None:
             open_orders = await self.get_open_orders(symbol)
+
         if not open_orders:
             #print(f"[cancel_orders] No open orders for {symbol}")
             return []
+        
+        if not isinstance(open_orders, list):
+            open_orders = [open_orders]
 
         order_ids = [o["id"] for o in open_orders]
 
