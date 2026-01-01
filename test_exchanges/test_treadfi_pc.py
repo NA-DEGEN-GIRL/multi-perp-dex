@@ -21,9 +21,9 @@ async def main():
     print(f"Available symbols: {ex.available_symbols.get('perp', [])[:5]}...")
     print()
 
-    res = await ex.update_leverage(symbol)
-    print(f"Leverage update result: {res}")
-    return
+    #res = await ex.update_leverage(symbol)
+    #print(f"Leverage update result: {res}")
+    #return
 
     # Get collateral (via Pacifica WS/REST)
     coll = await ex.get_collateral()
@@ -35,6 +35,21 @@ async def main():
     print(f"Mark price: {price}")
     await asyncio.sleep(0.1)
 
+    print(f"\nFetching open orders...")
+    open_orders = await ex.get_open_orders(symbol)
+    print(f"Open orders: {open_orders}")
+    await asyncio.sleep(0.5)
+
+    # Cancel all orders (via TreadFi API)
+
+    for o in open_orders:
+        res = await ex.cancel_orders(symbol, o)
+        print(f"Cancel result: {res}")
+        return
+        await asyncio.sleep(0.5)
+
+    return
+
     # Get orderbook (via Pacifica WS)
     try:
         ob = await ex.get_orderbook(symbol)
@@ -43,6 +58,8 @@ async def main():
     except Exception as e:
         print(f"Orderbook error: {e}")
     await asyncio.sleep(0.1)
+
+    
 
     # Limit buy order (via TreadFi API)
     l_price = price * 0.97

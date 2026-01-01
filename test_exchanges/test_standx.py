@@ -31,6 +31,21 @@ async def main():
     symbol = symbol_create("standx", "BTC")
     print(f"\n2. Symbol: {symbol}")
 
+    # Get open orders
+    print(f"\n6. Getting open orders for {symbol}...")
+    try:
+        orders = await ex.get_open_orders(symbol)
+        print(f"   Open orders: {len(orders)}")
+        for o in orders[:3]:
+            print(f"   - {o.get('side')} {o.get('qty')} @ {o.get('price')}")
+    except Exception as e:
+        print(f"   Error: {e}")
+
+    for o in orders:
+        res = await ex.cancel_orders(symbol, o)
+        print(f"   Cancel orders result: {res}")
+        return
+
     # Get mark price
     print("\n3. Getting mark price...")
     try:
@@ -64,15 +79,7 @@ async def main():
     except Exception as e:
         print(f"   Error: {e}")
 
-    # Get open orders
-    print(f"\n6. Getting open orders for {symbol}...")
-    try:
-        orders = await ex.get_open_orders(symbol)
-        print(f"   Open orders: {len(orders)}")
-        for o in orders[:3]:
-            print(f"   - {o.get('side')} {o.get('qty')} @ {o.get('price')}")
-    except Exception as e:
-        print(f"   Error: {e}")
+    
 
     while True:
         print("\n3. Getting mark price...")

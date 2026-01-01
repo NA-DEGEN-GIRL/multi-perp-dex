@@ -790,10 +790,15 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
     
     async def cancel_orders(self, symbol, open_orders = None):
         await self.initialize_if_needed()
+
         if open_orders is None:
             open_orders = await self.get_open_orders(symbol)
+
         if not open_orders:
             return []
+        
+        if open_orders is not None and not isinstance(open_orders, list):
+            open_orders = [open_orders]
         
         results = []
         for o in open_orders:

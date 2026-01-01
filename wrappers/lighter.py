@@ -604,8 +604,10 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
             open_orders = await self.get_open_orders(symbol)
             
         if not open_orders:
-            #print(f"[cancel_orders] No open orders for {symbol}")
             return []
+
+        if open_orders is not None and not isinstance(open_orders, list):
+            open_orders = [open_orders]
 
         market_id = self.market_info[symbol]["market_id"]
 

@@ -27,9 +27,22 @@ async def main():
     print(price)
     await asyncio.sleep(0.1)
 
-    res = await pacifica.update_leverage(symbol)
-    print(res)
+    open_orders = await pacifica.get_open_orders(symbol)
+    print(open_orders)
+    await asyncio.sleep(0.5)
+    
+    for order in open_orders:
+        # cancel all orders
+        res = await pacifica.cancel_orders(symbol, order)
+        print(res)
+        return
+    await asyncio.sleep(0.5)
+
     return
+
+    #res = await pacifica.update_leverage(symbol)
+    #print(res)
+    #return
     
     res = await pacifica.get_orderbook(symbol)
     print(res)

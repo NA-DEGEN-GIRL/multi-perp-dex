@@ -24,6 +24,18 @@ async def main():
     position = await variational.get_position(symbol)
     print(position)
     await asyncio.sleep(0.5)
+    
+    
+    open_orders = await variational.get_open_orders(symbol)
+    print(open_orders)
+    await asyncio.sleep(0.5)
+
+    for o in open_orders:
+        res = await variational.cancel_orders(symbol, o)
+        print(res)
+        return 
+    await asyncio.sleep(0.5)
+
     return
     
     price = await variational.get_mark_price(symbol) # 강제 250ms 단위 fetch가 이루어짐.

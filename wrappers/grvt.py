@@ -145,7 +145,7 @@ class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
         if not open_orders:
             return []
 
-        if not isinstance(open_orders, list):
+        if open_orders is not None and not isinstance(open_orders, list):
             open_orders = [open_orders]
 
         tasks = []

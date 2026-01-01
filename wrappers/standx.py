@@ -459,9 +459,12 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         # First get open orders
         if open_orders is None:
             open_orders = await self.get_open_orders(symbol)
-
+            
         if not open_orders:
-            return {"canceled": 0}
+            return []
+
+        if open_orders is not None and not isinstance(open_orders, list):
+            open_orders = [open_orders]
 
         # Extract order IDs
         order_ids = [o.get("id") for o in open_orders if o.get("id")]

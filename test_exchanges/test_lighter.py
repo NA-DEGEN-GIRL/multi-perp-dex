@@ -26,7 +26,7 @@ async def main():
     res = await lighter.get_open_orders('BTC')
     print(res)
 
-    res = await lighter.cancel_orders('BTC')
+    res = await lighter.cancel_orders('BTC', res)
     print(res)
     return
     #available_symbols = await lighter.get_available_symbols()

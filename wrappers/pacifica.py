@@ -581,6 +581,14 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         Cancel orders (WS or REST based on order_by_ws setting)
         """
         symbol = symbol.upper()
+        if open_orders is None:
+            open_orders = await self.get_open_orders(symbol)
+
+        if not open_orders:
+            return []
+        
+        if open_orders is not None and not isinstance(open_orders, list):
+            open_orders = [open_orders]
 
         if self.order_by_ws:
             try:
@@ -590,12 +598,37 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
 
         return await self.cancel_orders_rest(symbol, open_orders)
 
-    async def cancel_orders_ws(self, symbol, _open_orders=None):
-        """Cancel all orders via WebSocket (uses cancel_all_orders, ignores open_orders param)"""
+    async def cancel_orders_ws(self, symbol, open_orders=None):
+        """
+        Cancel orders via WebSocket.
+        If open_orders is None, cancel all orders for symbol.
+        If open_orders is provided, cancel each order individually.
+        """
         if not self.ws_client:
             await self._create_ws_client()
 
-        # Use cancel_all_orders for efficiency
+        # If specific orders provided, cancel individually
+        if open_orders is not None:
+            results = []
+            for order in open_orders:
+                order_id = order.get("id")
+                if not order_id:
+                    continue
+                try:
+                    result = await self.ws_client.cancel_order_ws(
+                        symbol=symbol,
+                        order_id=int(order_id),
+                    )
+                    code = result.get("code")
+                    if code == 200:
+                        results.append({"status": "OK", "order_id": order_id})
+                    else:
+                        results.append({"status": "error", "order_id": order_id, "result": result})
+                except Exception as e:
+                    results.append({"status": "error", "order_id": order_id, "error": str(e)})
+            return results
+
+        # No specific orders - cancel all
         result = await self.ws_client.cancel_all_orders_ws(symbol=symbol)
 
         code = result.get("code")
@@ -608,12 +641,7 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
 
     async def cancel_orders_rest(self, symbol, open_orders=None):
         """Cancel orders via REST (one by one)"""
-        if open_orders is None:
-            open_orders = await self.get_open_orders(symbol)
-
-        if not open_orders:
-            return []
-
+        
         results = []
         for order in open_orders:
             order_id = order["id"]
@@ -658,9 +686,6 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
                 })
         return results
             
-            
-
-
     async def refresh_prices(self) -> Dict[str, float]:
         """
         GET /info/prices → 런타임 캐시(self._price_cache) 갱신 후 {symbol: mark(float)} 반환
