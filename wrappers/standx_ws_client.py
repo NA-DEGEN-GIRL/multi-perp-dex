@@ -264,8 +264,8 @@ class StandXWSClient:
         }
         if streams:
             auth_msg["auth"]["streams"] = streams
-        
-        self._user_subs.add(streams[0]["channel"] for stream in streams) if streams else None
+            for stream in streams:
+                self._user_subs.add(stream["channel"])
 
         await self._send(auth_msg)
 
@@ -432,7 +432,7 @@ class StandXWSClient:
         except asyncio.TimeoutError:
             return False
 
-    async def wait_balance_ready(self, timeout: float = 5.0) -> bool:
+    async def wait_balance_ready(self, timeout: float = 1.0) -> bool:
         """Wait until balance data is available"""
         if self._balance:
             return True
