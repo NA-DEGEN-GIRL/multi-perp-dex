@@ -740,25 +740,56 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         return None
 
     # -------------------- 주문/취소 (공통 골격) --------------------
-    async def _send_action(self, payload: dict, *, prefer_ws: bool, timeout: float):
-        """WS post 우선 → HTTP 폴백으로 payload 전송."""
-        if prefer_ws and self.fetch_by_ws:
+    async def _send_action(
+        self,
+        payload: dict,
+        *,
+        prefer_ws: bool,
+        timeout: float,
+        max_retries: int = 3,
+        base_delay: float = 0.2,
+    ):
+        """WS post 우선 → HTTP 폴백으로 payload 전송. 실패 시 exponential backoff 재시도."""
+        last_error = None
+
+        for attempt in range(max_retries):
+            # WS 시도
+            if prefer_ws and self.fetch_by_ws:
+                try:
+                    if not self.ws_client:
+                        await self._create_ws_client()
+                    if self.ws_client:
+                        resp = await self.ws_client.post_action(payload, timeout=timeout)
+                        if str(resp.get("type", "")) == "error":
+                            raise RuntimeError(str(resp.get("payload")))
+                        return resp.get("payload", {})
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (2 ** attempt)
+                        print(f"[HL] WS action failed (attempt {attempt + 1}/{max_retries}): {e}, retry in {delay:.2f}s")
+                        await asyncio.sleep(delay)
+                        continue
+                    # 마지막 시도면 REST로 폴백
+                    print(f"[HL] WS failed, falling back to REST: {e}")
+                    await asyncio.sleep(0.1)
+
+            # REST 시도
             try:
-                if not self.ws_client:
-                    await self._create_ws_client()
-                if self.ws_client:
-                    resp = await self.ws_client.post_action(payload, timeout=timeout)
-                    if str(resp.get("type", "")) == "error":
-                        raise RuntimeError(str(resp.get("payload")))
-                    return resp.get("payload", {})
+                s = self._session()
+                async with s.post(f"{self.http_base}/exchange", json=payload, headers={"Content-Type": "application/json"}) as r:
+                    r.raise_for_status()
+                    return await r.json()
             except Exception as e:
-                print(f"falling back to rest api for payload {e}")
-                await asyncio.sleep(0.15)  # 잠시 대기
-                pass
-        s = self._session()
-        async with s.post(f"{self.http_base}/exchange", json=payload, headers={"Content-Type": "application/json"}) as r:
-            r.raise_for_status()
-            return await r.json()
+                last_error = e
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"[HL] REST action failed (attempt {attempt + 1}/{max_retries}): {e}, retry in {delay:.2f}s")
+                    await asyncio.sleep(delay)
+                else:
+                    raise
+
+        raise last_error or RuntimeError("_send_action failed after retries")
 
     async def update_leverage(self, symbol: str, leverage: Optional[int] = None, *, prefer_ws: bool = True, timeout: float = 5.0):
         if self._leverage_updated_to_max:
