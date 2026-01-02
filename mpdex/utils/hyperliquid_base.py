@@ -762,7 +762,6 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             return await r.json()
 
     async def update_leverage(self, symbol: str, leverage: Optional[int] = None, *, prefer_ws: bool = True, timeout: float = 5.0):
-        print(f"self._leverage_updated_to_max = {self._leverage_updated_to_max}")
         if self._leverage_updated_to_max:
             return {"status": "ok", "response": "already updated"}
         dex, coin_key = parse_hip3_symbol(symbol.strip())
