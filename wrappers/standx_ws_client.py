@@ -219,8 +219,24 @@ class StandXWSClient:
             self._position_event.set()
 
         elif channel == "balance":
-            print("[standx_ws] balance update:", payload)
-            self._balance = payload
+            # Transform WS format to REST-like format
+            # WS: {free, total, locked, ...}
+            # REST: {cross_available, balance, equity, upnl, cross_balance, isolated_balance, ...}
+            free = payload.get("free", "0")
+            total = payload.get("total", "0")
+            locked = payload.get("locked", "0")
+
+            self._balance = {
+                "cross_available": free,
+                "balance": total,
+                "equity": total,  # WS doesn't provide upnl, so equity ≈ balance
+                "upnl": "0",
+                "cross_balance": total,
+                "isolated_balance": "0",
+                "locked": locked,
+                # Keep original fields for reference
+                "_raw": payload,
+            }
             self._balance_event.set()
 
     async def _send(self, msg: Dict[str, Any]):
