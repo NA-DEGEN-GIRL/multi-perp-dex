@@ -106,8 +106,8 @@ class StandXWSClient:
                 msg = await self._ws.recv()
                 data = json.loads(msg)
                 await self._handle_message(data)
-            except websockets.ConnectionClosed:
-                print("[standx_ws] connection closed, reconnecting...")
+            except websockets.ConnectionClosed as e:
+                print(f"[standx_ws] connection closed (code={e.code}, reason={e.reason}), reconnecting...")
                 await self._reconnect_with_backoff()
                 continue
             except asyncio.CancelledError:
