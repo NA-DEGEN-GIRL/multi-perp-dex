@@ -38,7 +38,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         builder_code: Optional[str] = None,
         builder_fee_pair: Optional[dict] = None,
         *,
-        fetch_by_ws: bool = False,
+        fetch_by_ws: bool = True,
         FrontendMarket: bool = False,
     ):
         super().__init__()

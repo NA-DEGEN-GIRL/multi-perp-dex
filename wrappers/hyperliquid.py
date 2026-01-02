@@ -22,7 +22,7 @@ class HyperliquidExchange(HyperliquidBase):
         builder_code=None,
         builder_fee_pair=None,
         *,
-        fetch_by_ws=False,
+        fetch_by_ws=True,
         FrontendMarket=False,
     ):
         super().__init__(
