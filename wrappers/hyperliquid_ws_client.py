@@ -157,7 +157,8 @@ class HLWSClientRaw:
         # [ADDED] Orderbook 캐시: coin(upper) -> {"bids": [...], "asks": [...], "time": int}
         self._orderbooks: Dict[str, Dict[str, Any]] = {}
         self._orderbook_events: Dict[str, asyncio.Event] = {}  # coin -> Event (첫 스냅샷 대기용)
-        self._orderbook_subs: set[str] = set()  # 구독 중인 coin 집합 (WS coin 표기: 예: "@142", "BTC")
+        self._orderbook_sub_counts: Dict[str, int] = {}  # 구독 레퍼런스 카운트 (coin -> count)
+        self._orderbook_sub_lock = asyncio.Lock()  # 레퍼런스 카운트 race condition 방지
     
     def user_count(self) -> int:
         return len(self._user_subs)
@@ -640,11 +641,12 @@ class HLWSClientRaw:
                 await self._send_subscribe(sub)
                 ws_logger.info(f"RESUB(user) -> {json_dumps({'method':'subscribe','subscription':sub})}")
 
-        # [ADDED] 4) 오더북 재구독
-        for coin in list(self._orderbook_subs):
-            sub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
-            await self._send_subscribe(sub)
-            ws_logger.info(f"RESUB(orderbook) -> {json_dumps({'method':'subscribe','subscription':sub})}")
+        # [ADDED] 4) 오더북 재구독 (count > 0인 것들만)
+        for coin in list(self._orderbook_sub_counts.keys()):
+            if self._orderbook_sub_counts.get(coin, 0) > 0:
+                sub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
+                await self._send_subscribe(sub)
+                ws_logger.info(f"RESUB(orderbook) -> {json_dumps({'method':'subscribe','subscription':sub})}")
 
     # ---------------------- 루프/콜백 ----------------------
 
@@ -976,16 +978,22 @@ class HLWSClientRaw:
 
     async def subscribe_orderbook(self, symbol: str) -> None:
         """
-        특정 심볼의 l2Book 구독.
-        - 이미 구독 중이면 무시.
+        특정 심볼의 l2Book 구독 (레퍼런스 카운팅).
+        - count가 0→1이 될 때만 실제 구독 메시지 전송
         - 구독 메시지: {"method":"subscribe","subscription":{"type":"l2Book","coin":"<coin>","nSigFigs":null}}
         """
         coin = self._resolve_coin_for_orderbook(symbol)
-        if coin in self._orderbook_subs:
-            return
-        sub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
-        await self._send_subscribe(sub)
-        self._orderbook_subs.add(coin)
+
+        async with self._orderbook_sub_lock:
+            current_count = self._orderbook_sub_counts.get(coin, 0)
+            self._orderbook_sub_counts[coin] = current_count + 1
+            should_subscribe = (current_count == 0)
+
+        # 첫 구독자일 때만 실제 구독 메시지 전송 (lock 밖에서)
+        if should_subscribe:
+            sub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
+            await self._send_subscribe(sub)
+
         # 대기 이벤트 준비 (정규화된 키 사용)
         norm_key = self._normalize_symbol_key(symbol)
         if norm_key not in self._orderbook_events:
@@ -993,29 +1001,46 @@ class HLWSClientRaw:
 
     async def unsubscribe_orderbook(self, symbol: str) -> bool:
         """
-        l2Book 구독 해제.
+        l2Book 구독 해제 (레퍼런스 카운팅).
+        - count가 1→0이 될 때만 실제 unsubscribe 메시지 전송
         - {"method":"unsubscribe","subscription":{"type":"l2Book","coin":"<coin>","nSigFigs":null}}
         """
         try:
             coin = self._resolve_coin_for_orderbook(symbol)
-            if coin not in self._orderbook_subs:
-                return True
-            if not self.conn:
-                return True
-            unsub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
-            msg = {"method": "unsubscribe", "subscription": unsub}
-            async with self._send_lock:
-                await self.conn.send(json_dumps(msg))
-            self._orderbook_subs.discard(coin)
-            # 캐시/이벤트 정리 (정규화된 키 사용)
             norm_key = self._normalize_symbol_key(symbol)
-            self._orderbooks.pop(norm_key, None)
-            self._orderbook_events.pop(norm_key, None)
-            # active_subs에서도 제거
-            sub_key = _sub_key(unsub)
-            self._active_subs.discard(sub_key)
-            # 서버 처리 대기 (빠른 재구독 시 문제 방지)
-            await asyncio.sleep(0.2)
+
+            async with self._orderbook_sub_lock:
+                current_count = self._orderbook_sub_counts.get(coin, 0)
+
+                # 이미 구독 안 되어있으면 무시
+                if current_count <= 0:
+                    return True
+
+                # 카운트 감소
+                new_count = current_count - 1
+                self._orderbook_sub_counts[coin] = new_count
+                should_unsubscribe = (new_count == 0)
+
+            # 마지막 구독자가 해제할 때만 실제 unsubscribe (lock 밖에서)
+            if should_unsubscribe:
+                if not self.conn:
+                    return True
+                unsub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
+                msg = {"method": "unsubscribe", "subscription": unsub}
+                async with self._send_lock:
+                    await self.conn.send(json_dumps(msg))
+                # 서버 처리 대기 (최소한의 여유)
+                # await asyncio.sleep(0.05)
+                # 캐시/이벤트 정리
+                self._orderbooks.pop(norm_key, None)
+                self._orderbook_events.pop(norm_key, None)
+                sub_key = _sub_key(unsub)
+                self._active_subs.discard(sub_key)
+                # sleep 후 다시 lock 잡고 count 확인 후 삭제 (race condition 방지)
+                async with self._orderbook_sub_lock:
+                    if self._orderbook_sub_counts.get(coin, 0) == 0:
+                        self._orderbook_sub_counts.pop(coin, None)
+
             return True
         except Exception as e:
             ws_logger.error(f"unsubscribe_orderbook error: {e}")
