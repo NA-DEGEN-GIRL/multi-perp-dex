@@ -479,7 +479,7 @@ class StandXWSPool:
             # Authenticate if token provided
             if jwt_token:
                 auth = await client.authenticate(jwt_token, streams=[
-                    {"channel": "position"},
+                    #{"channel": "position"}, 일단 미사용
                     {"channel": "balance"},
                 ])
                 if not auth:

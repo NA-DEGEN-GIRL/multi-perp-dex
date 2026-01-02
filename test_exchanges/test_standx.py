@@ -54,34 +54,33 @@ async def main():
     except Exception as e:
         print(f"   Error: {e}")
 
-    # Get collateral
-    print("\n4. Getting collateral...")
-    try:
-        coll = await ex.get_collateral()
-        print(f"   Available: {coll.get('available_collateral')}")
-        print(f"   Total: {coll.get('total_collateral')}")
-        print(f"   Equity: {coll.get('equity')}")
-        print(f"   UPNL: {coll.get('upnl')}")
-    except Exception as e:
-        print(f"   Error: {e}")
-
-    # Get position
-    print(f"\n5. Getting position for {symbol}...")
-    try:
-        pos = await ex.get_position(symbol)
-        if pos:
-            print(f"   Side: {pos.get('side')}")
-            print(f"   Size: {pos.get('size')}")
-            print(f"   Entry: {pos.get('entry_price')}")
-            print(f"   UPNL: {pos.get('unrealized_pnl')}")
-        else:
-            print("   No position")
-    except Exception as e:
-        print(f"   Error: {e}")
+    while True:
+        # Get collateral
+        print("\n4. Getting collateral...")
+        try:
+            coll = await ex.get_collateral()
+            print(f"   Available: {coll.get('available_collateral')}")
+            print(f"   Total: {coll.get('total_collateral')}")
+            print(f"   Equity: {coll.get('equity')}")
+            print(f"   UPNL: {coll.get('upnl')}")
+        except Exception as e:
+            print(f"   Error: {e}")
+        return
+        # Get position
+        print(f"\n5. Getting position for {symbol}...")
+        try:
+            pos = await ex.get_position(symbol)
+            if pos:
+                print(f"   Side: {pos.get('side')}")
+                print(f"   Size: {pos.get('size')}")
+                print(f"   Entry: {pos.get('entry_price')}")
+                print(f"   UPNL: {pos.get('unrealized_pnl')}")
+            else:
+                print("   No position")
+        except Exception as e:
+            print(f"   Error: {e}")
 
     
-
-    while True:
         print("\n3. Getting mark price...")
         try:
             price = await ex.get_mark_price(symbol)
@@ -99,7 +98,7 @@ async def main():
         except Exception as e:
             print(f"   Error: {e}")
         
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.5)
         await ex.unsubscribe_orderbook(symbol)
     # Example order (commented out for safety)
     '''
