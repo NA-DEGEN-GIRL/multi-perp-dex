@@ -160,8 +160,8 @@ class StandXWSClient:
                 "auth": {
                     "token": self.jwt_token,
                     "streams": [
-                        {"channel": "position"},
-                        {"channel": "balance"},
+                        #{"channel": "position"}, 일단 미사용
+                        #{"channel": "balance"}, 일단 미사용
                     ]
                 }
             }
