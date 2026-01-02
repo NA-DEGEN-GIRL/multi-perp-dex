@@ -747,7 +747,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         prefer_ws: bool,
         timeout: float,
         max_retries: int = 3,
-        base_delay: float = 0.2,
+        base_delay: float = 0.5,
     ):
         """WS post 우선 → HTTP 폴백으로 payload 전송. 실패 시 exponential backoff 재시도."""
         last_error = None
