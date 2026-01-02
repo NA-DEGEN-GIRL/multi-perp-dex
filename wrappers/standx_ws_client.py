@@ -480,7 +480,7 @@ class StandXWSPool:
             if jwt_token:
                 auth = await client.authenticate(jwt_token, streams=[
                     #{"channel": "position"}, 일단 미사용
-                    {"channel": "balance"},
+                    #{"channel": "balance"}, 일단 미사용
                 ])
                 if not auth:
                     print(f"[standx_ws_pool] auth failed for wallet {wallet_address}")

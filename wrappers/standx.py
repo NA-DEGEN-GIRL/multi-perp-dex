@@ -265,7 +265,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
                 "upnl": float,
             }
         """
-        if self.fetch_by_ws or self.fetch_by_ws_partial:
+        if self.fetch_by_ws:
             try:
                 return await self.get_collateral_ws()
             except Exception as e:
