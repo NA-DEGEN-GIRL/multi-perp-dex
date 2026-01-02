@@ -33,8 +33,12 @@ async def main():
     #res = await lighter.create_order(symbol, 'buy', 0.0003)
     #print(res)
     #await asyncio.sleep(0.1)
-   
     while True:
+        res = await lighter.get_orderbook(symbol)
+        print(len(res.get('bids', [])), len(res.get('asks', [])))
+        await asyncio.sleep(0.1)
+
+    while False:
         position = await lighter.get_position('BTC')
         print(position)
         await asyncio.sleep(0.1)

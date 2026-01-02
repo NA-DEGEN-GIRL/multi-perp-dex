@@ -306,6 +306,36 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
             price = res.to_dict()["order_book_details"][0]["last_trade_price"]
         return price
 
+    async def get_orderbook(self, symbol: str, timeout: float = 5.0) -> dict:
+        """
+        Orderbook 조회 (WS only).
+
+        반환: {
+            "asks": [[price, size], ...],  # 오름차순
+            "bids": [[price, size], ...],  # 내림차순
+            "time": int (ms timestamp),
+        }
+        """
+        if not self._ws_client:
+            return {"asks": [], "bids": [], "time": 0}
+
+        m_info = self.market_info.get(symbol)
+        if not m_info:
+            return {"asks": [], "bids": [], "time": 0}
+
+        # subscribe if needed
+        await self._ws_client.subscribe_orderbook(symbol)
+        await self._ws_client.wait_orderbook_ready(symbol, timeout=timeout)
+
+        ob = self._ws_client.get_orderbook(symbol)
+        return ob if ob else {"asks": [], "bids": [], "time": 0}
+
+    async def unsubscribe_orderbook(self, symbol: str) -> bool:
+        """Orderbook 구독 해제"""
+        if self._ws_client:
+            return await self._ws_client.unsubscribe_orderbook(symbol)
+        return False
+
     async def create_order(self, symbol, side, amount, price=None, order_type='market'):
         if price is not None:
             order_type = 'limit'

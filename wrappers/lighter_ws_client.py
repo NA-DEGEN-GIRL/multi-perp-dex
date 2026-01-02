@@ -19,6 +19,7 @@ import asyncio
 import json
 import random
 import logging
+import time
 from typing import Any, Dict, List, Optional
 import websockets
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK, InvalidStatusCode
@@ -79,6 +80,13 @@ class LighterWSClient:
         # symbol -> market_id 매핑 (외부에서 주입)
         self._symbol_to_market_id: Dict[str, int] = {}
         self._market_id_to_symbol: Dict[int, str] = {}
+
+        # ========== Orderbook (delta-based) ==========
+        # market_id -> {"asks": [[px, sz], ...], "bids": [...], "time": ms}
+        self._orderbooks: Dict[int, Dict[str, Any]] = {}
+        self._orderbook_nonces: Dict[int, int] = {}  # market_id -> last nonce
+        self._orderbook_subs: set[int] = set()  # subscribed market_ids
+        self._orderbook_events: Dict[int, asyncio.Event] = {}
 
         # ========== 이벤트 (첫 데이터 수신 대기용) ==========
         self._market_stats_ready = asyncio.Event()
@@ -179,6 +187,61 @@ class LighterWSClient:
         for ch in old_subs:
             await self._send_subscribe(ch)
 
+    # ==================== Orderbook 구독 ====================
+
+    async def subscribe_orderbook(self, symbol: str) -> bool:
+        """
+        Orderbook 채널 구독 (delta-based).
+        첫 메시지는 스냅샷, 이후는 변경분만 전달됨.
+        """
+        mid = self._symbol_to_market_id.get(symbol.upper())
+        if mid is None:
+            logger.warning(f"[LighterWS] Unknown symbol for orderbook: {symbol}")
+            return False
+
+        if mid in self._orderbook_subs:
+            return True  # 이미 구독 중
+
+        channel = f"order_book/{mid}"
+        await self._send_subscribe(channel)
+        self._orderbook_subs.add(mid)
+
+        if mid not in self._orderbook_events:
+            self._orderbook_events[mid] = asyncio.Event()
+
+        return True
+
+    async def unsubscribe_orderbook(self, symbol: str) -> bool:
+        """Orderbook 채널 구독 해제"""
+        mid = self._symbol_to_market_id.get(symbol.upper())
+        if mid is None:
+            return False
+
+        if mid not in self._orderbook_subs:
+            return True  # 이미 구독 안함
+
+        channel = f"order_book/{mid}"
+        if channel not in self._active_subs:
+            self._orderbook_subs.discard(mid)
+            return True
+
+        # Unsubscribe 메시지 전송
+        async with self._send_lock:
+            msg = {"type": "unsubscribe", "channel": channel}
+            if self.conn and self.conn.open:
+                await self.conn.send(_json_dumps(msg))
+            self._active_subs.discard(channel)
+            self._orderbook_subs.discard(mid)
+
+        # 캐시 정리
+        self._orderbooks.pop(mid, None)
+        self._orderbook_nonces.pop(mid, None)
+        if mid in self._orderbook_events:
+            self._orderbook_events[mid].clear()
+
+        logger.debug(f"[LighterWS] Unsubscribed orderbook: {symbol} (market_id={mid})")
+        return True
+
     # ==================== 내부 루프 ====================
 
     async def _ping_loop(self) -> None:
@@ -269,6 +332,11 @@ class LighterWSClient:
         # [ADDED] account_all_orders (오픈 오더)
         if ch.startswith("account_all_orders:"):
             self._handle_orders(msg)
+            return
+
+        # orderbook (delta-based)
+        if ch.startswith("order_book:"):
+            self._handle_orderbook(msg)
             return
 
     def _handle_market_stats(self, msg: Dict[str, Any]) -> None:
@@ -396,6 +464,126 @@ class LighterWSClient:
         if not self._orders_ready.is_set():
             self._orders_ready.set()
 
+    def _handle_orderbook(self, msg: Dict[str, Any]) -> None:
+        """
+        order_book/{market_id} 처리 (delta-based).
+
+        첫 메시지: 스냅샷 (전체 orderbook)
+        이후 메시지: 변경분만 (size가 0이면 해당 가격 레벨 삭제)
+
+        nonce 연속성:
+        - 현재 메시지의 begin_nonce == 이전 메시지의 nonce 여야 함
+        - 불연속 시 로그 경고 (스냅샷 재요청 고려 가능)
+        """
+        ch = msg.get("channel", "")
+        # channel: "order_book:{market_id}"
+        try:
+            mid = int(ch.split(":")[1])
+        except (IndexError, ValueError):
+            return
+
+        ob_data = msg.get("order_book")
+        if not ob_data:
+            return
+
+        new_nonce = ob_data.get("nonce")
+        begin_nonce = ob_data.get("begin_nonce")
+        asks_update = ob_data.get("asks", [])
+        bids_update = ob_data.get("bids", [])
+
+        # 첫 스냅샷 여부 확인
+        is_first = mid not in self._orderbooks
+
+        if is_first:
+            # 스냅샷: 전체 교체
+            asks = []
+            bids = []
+            for item in asks_update:
+                try:
+                    px = float(item.get("price", 0))
+                    sz = float(item.get("size", 0))
+                    if sz > 0:
+                        asks.append([px, sz])
+                except (ValueError, TypeError):
+                    continue
+            for item in bids_update:
+                try:
+                    px = float(item.get("price", 0))
+                    sz = float(item.get("size", 0))
+                    if sz > 0:
+                        bids.append([px, sz])
+                except (ValueError, TypeError):
+                    continue
+
+            # 정렬: asks 오름차순, bids 내림차순
+            asks.sort(key=lambda x: x[0])
+            bids.sort(key=lambda x: x[0], reverse=True)
+
+            self._orderbooks[mid] = {
+                "asks": asks,
+                "bids": bids,
+                "time": int(time.time() * 1000),
+            }
+        else:
+            # Delta 업데이트
+            # nonce 연속성 체크
+            last_nonce = self._orderbook_nonces.get(mid)
+            if last_nonce is not None and begin_nonce is not None:
+                if begin_nonce != last_nonce:
+                    logger.warning(
+                        f"[LighterWS] Orderbook nonce discontinuity for market {mid}: "
+                        f"expected begin_nonce={last_nonce}, got {begin_nonce}"
+                    )
+
+            # 현재 orderbook 가져오기
+            current = self._orderbooks[mid]
+            asks_dict = {lvl[0]: lvl[1] for lvl in current["asks"]}
+            bids_dict = {lvl[0]: lvl[1] for lvl in current["bids"]}
+
+            # asks 업데이트 적용
+            for item in asks_update:
+                try:
+                    px = float(item.get("price", 0))
+                    sz = float(item.get("size", 0))
+                    if sz <= 0:
+                        asks_dict.pop(px, None)  # 삭제
+                    else:
+                        asks_dict[px] = sz  # 추가/업데이트
+                except (ValueError, TypeError):
+                    continue
+
+            # bids 업데이트 적용
+            for item in bids_update:
+                try:
+                    px = float(item.get("price", 0))
+                    sz = float(item.get("size", 0))
+                    if sz <= 0:
+                        bids_dict.pop(px, None)  # 삭제
+                    else:
+                        bids_dict[px] = sz  # 추가/업데이트
+                except (ValueError, TypeError):
+                    continue
+
+            # dict -> list로 변환 후 정렬, 50개만 유지
+            asks = [[px, sz] for px, sz in asks_dict.items()]
+            bids = [[px, sz] for px, sz in bids_dict.items()]
+            asks.sort(key=lambda x: x[0])
+            bids.sort(key=lambda x: x[0], reverse=True)
+
+            self._orderbooks[mid] = {
+                "asks": asks,
+                "bids": bids,
+                "time": int(time.time() * 1000),
+            }
+
+        # nonce 저장
+        if new_nonce is not None:
+            self._orderbook_nonces[mid] = new_nonce
+
+        # 이벤트 시그널
+        if mid in self._orderbook_events:
+            self._orderbook_events[mid].set()
+
     async def _handle_disconnect(self) -> None:
         """연결 끊김 처리 → 재연결"""
         if self.conn:
@@ -496,6 +684,53 @@ class LighterWSClient:
                         except Exception:
                             pass
         return result
+
+    # ==================== Orderbook 조회 ====================
+
+    def get_orderbook(self, symbol: str, depth: int = 50) -> Optional[Dict[str, Any]]:
+        """
+        Orderbook 조회 (캐시).
+
+        Args:
+            symbol: 심볼
+            depth: 반환할 레벨 수 (기본 50)
+
+        반환: {
+            "asks": [[price, size], ...],  # 오름차순, 상위 depth개
+            "bids": [[price, size], ...],  # 내림차순, 상위 depth개
+            "time": int (ms timestamp),
+        }
+        """
+        mid = self._symbol_to_market_id.get(symbol.upper())
+        if mid is None:
+            return None
+        ob = self._orderbooks.get(mid)
+        if ob is None:
+            return None
+        # depth개만 반환
+        return {
+            "asks": ob["asks"][:depth],
+            "bids": ob["bids"][:depth],
+            "time": ob["time"],
+        }
+
+    async def wait_orderbook_ready(self, symbol: str, timeout: float = 5.0) -> bool:
+        """Orderbook 데이터 수신 대기"""
+        mid = self._symbol_to_market_id.get(symbol.upper())
+        if mid is None:
+            return False
+
+        if mid in self._orderbooks:
+            return True
+
+        if mid not in self._orderbook_events:
+            self._orderbook_events[mid] = asyncio.Event()
+
+        try:
+            await asyncio.wait_for(self._orderbook_events[mid].wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
 
     def get_collateral(self) -> Dict[str, Any]:
         """
