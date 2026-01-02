@@ -448,7 +448,7 @@ class StandXWSClient:
         except asyncio.TimeoutError:
             return False
 
-    async def wait_balance_ready(self, timeout: float = 1.0) -> bool:
+    async def wait_balance_ready(self, timeout: float = 0.1) -> bool:
         """Wait until balance data is available"""
         if self._balance:
             return True
