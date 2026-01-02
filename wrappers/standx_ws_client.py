@@ -68,8 +68,8 @@ class StandXWSClient:
             try:
                 self._ws = await websockets.connect(
                     self.ws_url,
-                    #ping_interval=20,
-                    #ping_timeout=10,
+                    ping_interval=1,
+                    ping_timeout=5,
                     close_timeout=5,
                 )
                 self._running = True
@@ -136,8 +136,8 @@ class StandXWSClient:
                 try:
                     self._ws = await websockets.connect(
                         self.ws_url,
-                        #ping_interval=20,
-                        #ping_timeout=10,
+                        ping_interval=1,
+                        ping_timeout=5,
                         close_timeout=5,
                     )
                     print("[standx_ws] reconnected successfully")
