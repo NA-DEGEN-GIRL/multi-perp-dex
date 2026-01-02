@@ -161,7 +161,7 @@ class StandXWSClient:
                     "token": self.jwt_token,
                     "streams": [
                         #{"channel": "position"}, 일단 미사용
-                        #{"channel": "balance"}, 일단 미사용
+                        {"channel": "balance"}, #일단 미사용
                     ]
                 }
             }
@@ -181,8 +181,8 @@ class StandXWSClient:
             await self._ws.send(json.dumps({"subscribe": {"channel": "depth_book", "symbol": symbol}}))
 
         # Resubscribe to user channels
-        for channel in self._user_subs:
-            await self._ws.send(json.dumps({"subscribe": {"channel": channel}}))
+        #for channel in self._user_subs:
+        #    await self._ws.send(json.dumps({"subscribe": {"channel": channel}}))
 
     async def _handle_message(self, data: Dict[str, Any]):
         """Handle incoming WebSocket message"""
@@ -264,6 +264,8 @@ class StandXWSClient:
         }
         if streams:
             auth_msg["auth"]["streams"] = streams
+        
+        self._user_subs.add(streams[0]["channel"] for stream in streams) if streams else None
 
         await self._send(auth_msg)
 
@@ -480,7 +482,7 @@ class StandXWSPool:
             if jwt_token:
                 auth = await client.authenticate(jwt_token, streams=[
                     #{"channel": "position"}, 일단 미사용
-                    #{"channel": "balance"}, 일단 미사용
+                    {"channel": "balance"}, 
                 ])
                 if not auth:
                     print(f"[standx_ws_pool] auth failed for wallet {wallet_address}")
