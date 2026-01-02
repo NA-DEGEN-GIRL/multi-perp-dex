@@ -172,6 +172,10 @@ class LighterWSClient:
         async with self._send_lock:
             if channel in self._active_subs:
                 return
+            # conn이 None이거나 닫혀있으면 스킵 (재연결 후 _resubscribe에서 재구독됨)
+            if not self.conn or not self.conn.open:
+                logger.warning(f"[LighterWS] _send_subscribe skipped (conn not ready): {channel}")
+                return
             msg = {"type": "subscribe", "channel": channel}
             # auth 필요한 채널이면 추가
             if self.auth_token and ("orders" in channel or "tx" in channel):

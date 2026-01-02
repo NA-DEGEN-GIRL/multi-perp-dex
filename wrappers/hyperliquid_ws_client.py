@@ -445,6 +445,10 @@ class HLWSClientRaw:
         async with self._send_lock:
             if key in self._active_subs:
                 return
+            # conn이 None이면 스킵 (재연결 후 _resub_all_channels에서 재구독됨)
+            if not self.conn:
+                ws_logger.warning(f"_send_subscribe skipped (conn is None): {key}")
+                return
             payload = {"method": "subscribe", "subscription": sub}
             await self.conn.send(json.dumps(payload, separators=(",", ":")))
             self._active_subs.add(key)
@@ -1027,14 +1031,13 @@ class HLWSClientRaw:
                     return True
 
                 # 마지막 구독자: lock 유지한 상태에서 unsubscribe 처리
-                if not self.conn:
-                    self._orderbook_sub_counts.pop(coin, None)
-                    return True
-
                 unsub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
                 msg = {"method": "unsubscribe", "subscription": unsub}
                 async with self._send_lock:
-                    await self.conn.send(json_dumps(msg))
+                    if self.conn:
+                        await self.conn.send(json_dumps(msg))
+                    else:
+                        ws_logger.warning(f"unsubscribe_orderbook skipped (conn is None): {coin}")
 
                 # 캐시/이벤트 정리 (lock 유지 상태)
                 self._orderbooks.pop(norm_key, None)
