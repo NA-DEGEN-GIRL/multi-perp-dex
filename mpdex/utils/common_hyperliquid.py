@@ -1,4 +1,4 @@
-from typing import Optional,Dict
+from typing import Optional, Dict, Any
 from decimal import Decimal, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN
 import aiohttp
 import asyncio
@@ -6,6 +6,66 @@ import asyncio
 BASE_URL = "https://api.hyperliquid.xyz"
 STABLES = ["USDC","USDT0","USDH","USDE"]
 STABLES_DISPLAY = ["USDC","USDT","USDH","USDE"]
+
+# 429 재시도 설정
+_RETRY_MAX_ATTEMPTS = 5
+_RETRY_BASE_DELAY = 1.0  # 초
+_RETRY_MAX_DELAY = 30.0  # 초
+
+
+async def _post_with_retry(
+    session: aiohttp.ClientSession,
+    url: str,
+    payload: dict,
+    *,
+    max_attempts: int = _RETRY_MAX_ATTEMPTS,
+    base_delay: float = _RETRY_BASE_DELAY,
+    max_delay: float = _RETRY_MAX_DELAY,
+) -> tuple[int, Any]:
+    """
+    POST 요청을 429 에러 시 지수 백오프로 재시도.
+    반환: (status_code, json_response or None)
+    """
+    headers = {"Content-Type": "application/json"}
+    delay = base_delay
+
+    for attempt in range(max_attempts):
+        try:
+            async with session.post(url, json=payload, headers=headers) as r:
+                status = r.status
+
+                if status == 429:
+                    # Retry-After 헤더 확인
+                    retry_after = r.headers.get("Retry-After")
+                    if retry_after:
+                        try:
+                            wait_time = float(retry_after)
+                        except ValueError:
+                            wait_time = delay
+                    else:
+                        wait_time = delay
+
+                    wait_time = min(wait_time, max_delay)
+                    print(f"[HL] 429 Too Many Requests, retry {attempt + 1}/{max_attempts} in {wait_time:.1f}s...")
+                    await asyncio.sleep(wait_time)
+                    delay = min(max_delay, delay * 2)
+                    continue
+
+                # 성공 또는 다른 에러
+                try:
+                    resp = await r.json()
+                except aiohttp.ContentTypeError:
+                    resp = None
+                return status, resp
+
+        except aiohttp.ClientError as e:
+            print(f"[HL] Request error: {e}, retry {attempt + 1}/{max_attempts} in {delay:.1f}s...")
+            await asyncio.sleep(delay)
+            delay = min(max_delay, delay * 2)
+            continue
+
+    # 모든 시도 실패
+    return 429, None
 
 # ============================================================
 # [ADDED] 모듈 레벨 공유 캐시(프로세스 내 1회만 로드)
@@ -69,6 +129,7 @@ async def init_shared_hl_cache(session: Optional[aiohttp.ClientSession] = None, 
             )
 
             _HL_SHARED_CACHE["inited"] = True
+            
         finally:
             if own_session:
                 await session.close()
@@ -219,14 +280,12 @@ def extract_cancel_status(raw) -> bool:
 
 async def get_dex_list(s: aiohttp.ClientSession):
     url = f"{BASE_URL}/info"
-    payload = {"type":"perpDexs"}
-    headers = {"Content-Type": "application/json"}
-    
-    async with s.post(url, json=payload, headers=headers) as r:
-        try:
-            resp = await r.json()
-        except aiohttp.ContentTypeError:
-            return
+    payload = {"type": "perpDexs"}
+
+    _, resp = await _post_with_retry(s, url, payload)
+    if resp is None:
+        return ["hl"]  # 기본값
+
     # 순서 유지 + 중복 제거 + lower 정규화
     order = ["hl"]  # HL 항상 선두
     seen = set(["hl"])
@@ -239,7 +298,8 @@ async def get_dex_list(s: aiohttp.ClientSession):
                 continue
             k = str(n).lower().strip()
             if k and k not in seen:
-                order.append(k); seen.add(k)
+                order.append(k)
+                seen.add(k)
     return order
 
 async def init_spot_token_map(s: aiohttp.ClientSession,
@@ -257,20 +317,9 @@ async def init_spot_token_map(s: aiohttp.ClientSession,
     """
     url = f"{BASE_URL}/info"
     payload = {"type": "spotMeta"}
-    headers = {"Content-Type": "application/json"}
 
-    async with s.post(url, json=payload, headers=headers) as r:
-        status = r.status
-        try:
-            resp = await r.json()
-        except aiohttp.ContentTypeError:
-            spot_index_to_name.clear()
-            spot_name_to_index.clear()
-            spot_asset_index_to_pair.clear()
-            spot_asset_index_to_bq.clear()
-            spot_token_sz_decimals.clear()
-            return False
-    
+    _, resp = await _post_with_retry(s, url, payload)
+
     # 안전 가드: dict 응답인지 확인
     if not isinstance(resp, dict):
         spot_index_to_name.clear()
@@ -298,7 +347,7 @@ async def init_spot_token_map(s: aiohttp.ClientSession,
                 idx2name[idx] = name
                 name2idx[name] = idx
                 token_szdec[name] = szd
-            except Exception as ex:
+            except Exception:
                 pass
         #print(name,idx)
     spot_index_to_name.update(idx2name)
@@ -377,8 +426,8 @@ async def init_spot_token_map(s: aiohttp.ClientSession,
 
     return True
 
-async def init_perp_meta_cache(s: aiohttp.ClientSession, 
-                               perp_metas_raw: dict, 
+async def init_perp_meta_cache(s: aiohttp.ClientSession,
+                               perp_metas_raw: dict,
                                perp_asset_map: dict,
                                ) -> bool:
     """
@@ -389,10 +438,9 @@ async def init_perp_meta_cache(s: aiohttp.ClientSession,
 
     url = f"{BASE_URL}/info"
     payload = {"type": "allPerpMetas"}
-    try:
-        async with s.post(url, json=payload, headers={"Content-Type": "application/json"}) as r:
-            metas = await r.json()
-    except Exception:
+
+    _, metas = await _post_with_retry(s, url, payload)
+    if metas is None:
         metas = []
 
     # 원본 저장
