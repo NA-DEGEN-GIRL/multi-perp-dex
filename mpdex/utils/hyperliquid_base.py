@@ -183,9 +183,9 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             await self._http.close()
         if self._ws_pool_key and self.ws_client:
             from wrappers.hyperliquid_ws_client import WS_POOL
-            ws_url, addr = self._ws_pool_key
+            addr = self._ws_pool_key
             try:
-                await WS_POOL.release(ws_url=ws_url, address=addr, client=self.ws_client)
+                await WS_POOL.release(address=addr, client=self.ws_client)
             except Exception:
                 pass
             self._ws_pool_key = None
@@ -340,8 +340,6 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         from wrappers.hyperliquid_ws_client import WS_POOL
         address = self.vault_address or self.wallet_address
         client = await WS_POOL.acquire(
-            ws_url=self.ws_base,
-            http_base=self.http_base,
             address=address,
             dex=None,
             dex_order=self.dex_list,
@@ -354,7 +352,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             if dex != "hl":
                 await client.ensure_allmids_for(dex)
         self.ws_client = client
-        self._ws_pool_key = (self.ws_base, (address or "").lower())
+        self._ws_pool_key = (address or "").lower()
 
     # -------------------- 자산 해석 --------------------
     async def _resolve_perp_asset_and_szdec(self, dex: Optional[str], coin_key: str):

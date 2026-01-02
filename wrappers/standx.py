@@ -283,11 +283,11 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         await self.ws_client.subscribe_balance()
 
         # Wait for data
-        ready = await self.ws_client.wait_balance_ready(timeout=timeout)
+        ready = await self.ws_client.wait_collateral_ready(timeout=timeout)
         if not ready:
-            raise TimeoutError("WS balance not ready")
+            raise TimeoutError("WS collateral not ready")
 
-        balance = self.ws_client.get_balance()
+        balance = self.ws_client.get_collateral()
         if balance is None:
             raise ValueError("No balance data available")
 
@@ -598,10 +598,10 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             await self._create_ws_client()
 
         # Subscribe if not already
-        await self.ws_client.subscribe_depth(symbol)
+        await self.ws_client.subscribe_orderbook(symbol)
 
         # Wait for data
-        ready = await self.ws_client.wait_depth_ready(symbol, timeout=timeout)
+        ready = await self.ws_client.wait_orderbook_ready(symbol, timeout=timeout)
         if not ready:
             raise TimeoutError(f"WS orderbook not ready for {symbol}")
 
@@ -660,7 +660,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         #return # 오더북 하나니깐 그냥 놔둠
         """Unsubscribe from orderbook WebSocket channel"""
         if self.ws_client:
-            await self.ws_client.unsubscribe_depth(symbol)
+            await self.ws_client.unsubscribe_orderbook(symbol)
 
     async def get_recent_trades(self, symbol: str) -> List[Dict]:
         """GET /api/query_recent_trades"""

@@ -12,153 +12,73 @@ WS URL: wss://ws.pacifica.fi/ws
 Heartbeat: ping every 50s (timeout at 60s)
 """
 import asyncio
-import json
-import random
+import logging
 import time
 import uuid
 from typing import Optional, Dict, Any, Set, List
-from dataclasses import dataclass, field
-
-import websockets
-from websockets.client import WebSocketClientProtocol
 
 from mpdex.utils.common_pacifica import sign_message
 from solders.keypair import Keypair
 
+from wrappers.base_ws_client import BaseWSClient, _json_dumps
+
+logger = logging.getLogger(__name__)
+
 
 PACIFICA_WS_URL = "wss://ws.pacifica.fi/ws"
-PING_INTERVAL = 50  # seconds (server timeout at 60s)
-RECONNECT_MIN = 1.0
-RECONNECT_MAX = 8.0
 
 
-@dataclass
-class PacificaWSClient:
+class PacificaWSClient(BaseWSClient):
     """
-    Single WebSocket connection to Pacifica.
-    Manages subscriptions and caches data.
+    Pacifica WebSocket 클라이언트.
+    BaseWSClient를 상속하여 연결/재연결 로직 공유.
     """
-    ws_url: str = PACIFICA_WS_URL
 
-    # Auth info (for trading via WS)
-    public_key: Optional[str] = None
-    agent_public_key: Optional[str] = None
-    agent_keypair: Optional[Keypair] = None
+    WS_URL = PACIFICA_WS_URL
+    PING_INTERVAL = 50.0  # seconds (server timeout at 60s)
+    RECONNECT_MIN = 1.0
+    RECONNECT_MAX = 8.0
 
-    # Connection
-    _ws: Optional[WebSocketClientProtocol] = field(default=None, repr=False)
-    _running: bool = field(default=False, repr=False)
-    _recv_task: Optional[asyncio.Task] = field(default=None, repr=False)
-    _ping_task: Optional[asyncio.Task] = field(default=None, repr=False)
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    def __init__(
+        self,
+        public_key: Optional[str] = None,
+        agent_public_key: Optional[str] = None,
+        agent_keypair: Optional[Keypair] = None,
+    ):
+        super().__init__()
 
-    # Subscriptions
-    _prices_subscribed: bool = field(default=False, repr=False)
-    _orderbook_subs: Set[str] = field(default_factory=set, repr=False)  # symbol -> agg_level
-    _account_info_subscribed: bool = field(default=False, repr=False)
-    _account_positions_subscribed: bool = field(default=False, repr=False)
-    _account_orders_subscribed: bool = field(default=False, repr=False)
+        # Auth info (for trading via WS)
+        self.public_key = public_key
+        self.agent_public_key = agent_public_key
+        self.agent_keypair = agent_keypair
 
-    # Cached data
-    _prices: Dict[str, Dict[str, Any]] = field(default_factory=dict, repr=False)  # symbol -> {mark, mid, oracle, ...}
-    _orderbooks: Dict[str, Dict[str, Any]] = field(default_factory=dict, repr=False)  # symbol -> {bids, asks}
-    _account_info: Optional[Dict[str, Any]] = field(default=None, repr=False)
-    _positions: Dict[str, Dict[str, Any]] = field(default_factory=dict, repr=False)  # symbol -> position
-    _orders: List[Dict[str, Any]] = field(default_factory=list, repr=False)  # all open orders
+        # Subscriptions
+        self._prices_subscribed: bool = False
+        self._orderbook_subs: Set[str] = set()
+        self._account_info_subscribed: bool = False
+        self._account_positions_subscribed: bool = False
+        self._account_orders_subscribed: bool = False
 
-    # Events for waiting
-    _prices_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
-    _orderbook_events: Dict[str, asyncio.Event] = field(default_factory=dict, repr=False)
-    _account_info_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
-    _positions_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
-    _orders_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+        # Cached data
+        self._prices: Dict[str, Dict[str, Any]] = {}
+        self._orderbooks: Dict[str, Dict[str, Any]] = {}
+        self._account_info: Optional[Dict[str, Any]] = None
+        self._positions: Dict[str, Dict[str, Any]] = {}
+        self._orders: List[Dict[str, Any]] = []
 
-    # Pending requests (for trading)
-    _pending_requests: Dict[str, asyncio.Future] = field(default_factory=dict, repr=False)
+        # Events for waiting
+        self._prices_event: asyncio.Event = asyncio.Event()
+        self._orderbook_events: Dict[str, asyncio.Event] = {}
+        self._account_info_event: asyncio.Event = asyncio.Event()
+        self._positions_event: asyncio.Event = asyncio.Event()
+        self._orders_event: asyncio.Event = asyncio.Event()
 
-    async def connect(self) -> bool:
-        """Connect to WebSocket"""
-        async with self._lock:
-            if self._ws is not None and self._running:
-                return True
+        # Pending requests (for trading)
+        self._pending_requests: Dict[str, asyncio.Future] = {}
 
-            try:
-                self._ws = await websockets.connect(
-                    self.ws_url,
-                    ping_interval=None,  # We handle ping manually
-                    ping_timeout=None,
-                    close_timeout=5,
-                )
-                self._running = True
-                self._recv_task = asyncio.create_task(self._recv_loop())
-                self._ping_task = asyncio.create_task(self._ping_loop())
-                return True
-            except Exception as e:
-                print(f"[pacifica_ws] connect failed: {e}")
-                return False
+    # ==================== Abstract Method Implementations ====================
 
-    async def close(self):
-        """Close WebSocket connection"""
-        self._running = False
-        if self._ping_task:
-            self._ping_task.cancel()
-            try:
-                await self._ping_task
-            except asyncio.CancelledError:
-                pass
-        if self._recv_task:
-            self._recv_task.cancel()
-            try:
-                await self._recv_task
-            except asyncio.CancelledError:
-                pass
-        # 죽은 소켓 hang 방지를 위해 timeout 적용
-        old_ws = self._ws
-        self._ws = None
-        if old_ws:
-            try:
-                await asyncio.wait_for(old_ws.close(), timeout=2.0)
-            except Exception:
-                pass
-        # Reset subscription states
-        self._prices_subscribed = False
-        self._orderbook_subs.clear()
-        self._account_info_subscribed = False
-        self._account_positions_subscribed = False
-        self._account_orders_subscribed = False
-
-    async def _ping_loop(self):
-        """Send periodic ping to keep connection alive"""
-        try:
-            while self._running:
-                await asyncio.sleep(PING_INTERVAL)
-                if self._ws and self._running:
-                    try:
-                        await self._ws.send(json.dumps({"method": "ping"}))
-                    except Exception as e:
-                        print(f"[pacifica_ws] ping failed: {e}")
-        except asyncio.CancelledError:
-            pass
-
-    async def _recv_loop(self):
-        """Background task to receive messages"""
-        while self._running and self._ws:
-            try:
-                msg = await self._ws.recv()
-                data = json.loads(msg)
-                await self._handle_message(data)
-            except websockets.ConnectionClosed:
-                print("[pacifica_ws] Connection closed, reconnecting...")
-                await self._handle_disconnect()
-                break
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                print(f"[pacifica_ws] recv error: {e}")
-                await self._handle_disconnect()
-                break
-
-    async def _handle_message(self, data: Dict[str, Any]):
+    async def _handle_message(self, data: Dict[str, Any]) -> None:
         """Handle incoming WebSocket message"""
         channel = data.get("channel")
 
@@ -205,7 +125,59 @@ class PacificaWSClient:
             self._handle_trading_response(data)
             return
 
-    def _handle_prices(self, items: List[Dict[str, Any]]):
+    async def _resubscribe(self) -> None:
+        """Resubscribe to all channels after reconnect"""
+        # 구독 상태 플래그 초기화 (재구독 허용)
+        was_prices = self._prices_subscribed
+        was_orderbook_subs = set(self._orderbook_subs)
+        was_account_info = self._account_info_subscribed
+        was_account_positions = self._account_positions_subscribed
+        was_account_orders = self._account_orders_subscribed
+
+        self._prices_subscribed = False
+        self._orderbook_subs.clear()
+        self._account_info_subscribed = False
+        self._account_positions_subscribed = False
+        self._account_orders_subscribed = False
+
+        # Public channels
+        if was_prices:
+            await self.subscribe_prices()
+        for symbol in was_orderbook_subs:
+            await self.subscribe_orderbook(symbol)
+
+        # Private channels
+        if self.public_key:
+            if was_account_info:
+                await self.subscribe_account_info(self.public_key)
+            if was_account_positions:
+                await self.subscribe_account_positions(self.public_key)
+            if was_account_orders:
+                await self.subscribe_account_orders(self.public_key)
+
+    def _build_ping_message(self) -> Optional[str]:
+        """Build ping message for Pacifica"""
+        return _json_dumps({"method": "ping"})
+
+    # ==================== Connection Management ====================
+
+    async def connect(self) -> bool:
+        """WS 연결 (base class 사용)"""
+        return await super().connect()
+
+    async def close(self) -> None:
+        """Close WebSocket connection and reset subscription states"""
+        await super().close()
+        # Reset subscription states
+        self._prices_subscribed = False
+        self._orderbook_subs.clear()
+        self._account_info_subscribed = False
+        self._account_positions_subscribed = False
+        self._account_orders_subscribed = False
+
+    # ==================== Message Handlers ====================
+
+    def _handle_prices(self, items: List[Dict[str, Any]]) -> None:
         """Handle prices channel data"""
         for item in items:
             if not isinstance(item, dict):
@@ -227,7 +199,7 @@ class PacificaWSClient:
         if not self._prices_event.is_set():
             self._prices_event.set()
 
-    def _handle_orderbook(self, data: Dict[str, Any]):
+    def _handle_orderbook(self, data: Dict[str, Any]) -> None:
         """
         Handle orderbook data.
         Format: {"l": [[bids], [asks]], "s": "SOL", "t": timestamp}
@@ -262,7 +234,7 @@ class PacificaWSClient:
         if symbol in self._orderbook_events:
             self._orderbook_events[symbol].set()
 
-    def _handle_account_info(self, data: Dict[str, Any]):
+    def _handle_account_info(self, data: Dict[str, Any]) -> None:
         """
         Handle account_info data.
         Format: {ae, as, aw, b, f, mu, cm, oc, pb, pc, sc, t}
@@ -284,7 +256,7 @@ class PacificaWSClient:
         if not self._account_info_event.is_set():
             self._account_info_event.set()
 
-    def _handle_positions(self, items: List[Dict[str, Any]]):
+    def _handle_positions(self, items: List[Dict[str, Any]]) -> None:
         """
         Handle account_positions data.
         Format: [{s, d, a, p, m, f, i, l, t}, ...]
@@ -321,7 +293,7 @@ class PacificaWSClient:
         if not self._positions_event.is_set():
             self._positions_event.set()
 
-    def _handle_orders(self, items: List[Dict[str, Any]]):
+    def _handle_orders(self, items: List[Dict[str, Any]]) -> None:
         """
         Handle account_orders data.
         Format: [{i, I, s, d, p, a, f, c, t, st, ot, sp, ro}, ...]
@@ -349,7 +321,7 @@ class PacificaWSClient:
         if not self._orders_event.is_set():
             self._orders_event.set()
 
-    def _handle_trading_response(self, data: Dict[str, Any]):
+    def _handle_trading_response(self, data: Dict[str, Any]) -> None:
         """Handle trading response (create_order, cancel_order, etc.)"""
         req_id = data.get("id")
         if req_id and req_id in self._pending_requests:
@@ -357,90 +329,10 @@ class PacificaWSClient:
             if not fut.done():
                 fut.set_result(data)
 
-    async def _send(self, msg: Dict[str, Any]):
-        """Send message to WebSocket"""
-        if not self._ws or not self._running:
-            await self.connect()
-        if self._ws:
-            await self._ws.send(json.dumps(msg))
-
-    async def _handle_disconnect(self) -> None:
-        """Handle disconnect and reconnect"""
-        # 먼저 ws를 None으로 설정 (죽은 소켓 사용 방지)
-        old_ws = self._ws
-        self._ws = None
-        if old_ws:
-            try:
-                await asyncio.wait_for(old_ws.close(), timeout=2.0)
-            except Exception:
-                pass
-        await self._reconnect_with_backoff()
-
-    async def _reconnect_with_backoff(self) -> None:
-        """Reconnect with exponential backoff"""
-        delay = RECONNECT_MIN
-        while self._running:
-            try:
-                await asyncio.sleep(delay)
-
-                # 기존 태스크 정리
-                if self._ping_task and not self._ping_task.done():
-                    self._ping_task.cancel()
-                if self._recv_task and not self._recv_task.done():
-                    self._recv_task.cancel()
-
-                # 새 연결
-                self._ws = await websockets.connect(
-                    self.ws_url,
-                    ping_interval=None,
-                    ping_timeout=None,
-                    close_timeout=5,
-                )
-                self._recv_task = asyncio.create_task(self._recv_loop())
-                self._ping_task = asyncio.create_task(self._ping_loop())
-
-                # 재구독
-                await self._resubscribe()
-                print("[pacifica_ws] Reconnected")
-                return
-            except Exception as e:
-                print(f"[pacifica_ws] Reconnect failed: {e}")
-                delay = min(RECONNECT_MAX, delay * 2.0) + random.uniform(0, 0.5)
-
-    async def _resubscribe(self) -> None:
-        """Resubscribe to all channels after reconnect"""
-        # 구독 상태 플래그 초기화 (재구독 허용)
-        was_prices = self._prices_subscribed
-        was_orderbook_subs = set(self._orderbook_subs)
-        was_account_info = self._account_info_subscribed
-        was_account_positions = self._account_positions_subscribed
-        was_account_orders = self._account_orders_subscribed
-
-        self._prices_subscribed = False
-        self._orderbook_subs.clear()
-        self._account_info_subscribed = False
-        self._account_positions_subscribed = False
-        self._account_orders_subscribed = False
-
-        # Public channels
-        if was_prices:
-            await self.subscribe_prices()
-        for symbol in was_orderbook_subs:
-            await self.subscribe_orderbook(symbol)
-
-        # Private channels
-        if self.public_key:
-            if was_account_info:
-                await self.subscribe_account_info(self.public_key)
-            if was_account_positions:
-                await self.subscribe_account_positions(self.public_key)
-            if was_account_orders:
-                await self.subscribe_account_orders(self.public_key)
-
     # ----------------------------
     # Public Subscriptions
     # ----------------------------
-    async def subscribe_prices(self):
+    async def subscribe_prices(self) -> None:
         """Subscribe to prices channel (all symbols)"""
         if self._prices_subscribed:
             return
@@ -450,7 +342,7 @@ class PacificaWSClient:
         })
         self._prices_subscribed = True
 
-    async def unsubscribe_prices(self):
+    async def unsubscribe_prices(self) -> None:
         """Unsubscribe from prices channel"""
         if not self._prices_subscribed:
             return
@@ -460,7 +352,7 @@ class PacificaWSClient:
         })
         self._prices_subscribed = False
 
-    async def subscribe_orderbook(self, symbol: str, agg_level: int = 1):
+    async def subscribe_orderbook(self, symbol: str, agg_level: int = 1) -> None:
         """
         Subscribe to orderbook channel for symbol.
         agg_level: 1, 2, 5, 10, 100, 1000
@@ -480,7 +372,7 @@ class PacificaWSClient:
         if symbol not in self._orderbook_events:
             self._orderbook_events[symbol] = asyncio.Event()
 
-    async def unsubscribe_orderbook(self, symbol: str):
+    async def unsubscribe_orderbook(self, symbol: str) -> bool:
         """Unsubscribe from orderbook channel"""
         symbol = symbol.upper()
         if symbol not in self._orderbook_subs:
@@ -498,7 +390,7 @@ class PacificaWSClient:
     # ----------------------------
     # Private Subscriptions
     # ----------------------------
-    async def subscribe_account_info(self, account: str):
+    async def subscribe_account_info(self, account: str) -> None:
         """Subscribe to account_info channel (requires auth)"""
         if self._account_info_subscribed:
             return
@@ -511,7 +403,7 @@ class PacificaWSClient:
         })
         self._account_info_subscribed = True
 
-    async def subscribe_account_positions(self, account: str):
+    async def subscribe_account_positions(self, account: str) -> None:
         """Subscribe to account_positions channel (requires auth)"""
         if self._account_positions_subscribed:
             return
@@ -524,7 +416,7 @@ class PacificaWSClient:
         })
         self._account_positions_subscribed = True
 
-    async def subscribe_account_orders(self, account: str):
+    async def subscribe_account_orders(self, account: str) -> None:
         """Subscribe to account_orders channel (requires auth)"""
         if self._account_orders_subscribed:
             return
@@ -537,7 +429,7 @@ class PacificaWSClient:
         })
         self._account_orders_subscribed = True
 
-    async def subscribe_all_private(self, account: str):
+    async def subscribe_all_private(self, account: str) -> None:
         """Subscribe to all private channels"""
         await self.subscribe_account_info(account)
         await self.subscribe_account_positions(account)
@@ -630,6 +522,10 @@ class PacificaWSClient:
         except asyncio.TimeoutError:
             return False
 
+    async def wait_price_ready(self, _symbol: str = "", timeout: float = 5.0) -> bool:
+        """Wait until price data is available (alias for wait_prices_ready)"""
+        return await self.wait_prices_ready(timeout=timeout)
+
     async def wait_orderbook_ready(self, symbol: str, timeout: float = 5.0) -> bool:
         """Wait until orderbook data is available"""
         symbol = symbol.upper()
@@ -653,6 +549,10 @@ class PacificaWSClient:
         except asyncio.TimeoutError:
             return False
 
+    async def wait_collateral_ready(self, timeout: float = 5.0) -> bool:
+        """Wait until collateral data is available (alias for wait_account_info_ready)"""
+        return await self.wait_account_info_ready(timeout=timeout)
+
     async def wait_positions_ready(self, timeout: float = 5.0) -> bool:
         """Wait until positions data is available"""
         if self._positions_event.is_set():
@@ -662,6 +562,10 @@ class PacificaWSClient:
             return True
         except asyncio.TimeoutError:
             return False
+
+    async def wait_position_ready(self, timeout: float = 5.0) -> bool:
+        """Wait until position data is available (alias for wait_positions_ready)"""
+        return await self.wait_positions_ready(timeout=timeout)
 
     async def wait_orders_ready(self, timeout: float = 5.0) -> bool:
         """Wait until orders data is available"""
@@ -676,6 +580,62 @@ class PacificaWSClient:
     # ----------------------------
     # Trading via WebSocket
     # ----------------------------
+    async def _send_signed_request(
+        self,
+        order_type: str,
+        signature_payload: Dict[str, Any],
+        timeout: float = 10.0,
+    ) -> Dict[str, Any]:
+        """
+        Send a signed trading request via WebSocket.
+
+        Args:
+            order_type: Request type (e.g., "create_order", "cancel_order")
+            signature_payload: The payload to sign and include in request
+            timeout: Request timeout in seconds
+
+        Returns:
+            Response dict from server
+        """
+        if not self.public_key or not self.agent_keypair:
+            raise ValueError("Auth required for trading")
+
+        req_id = str(uuid.uuid4())
+        ts = int(time.time() * 1000)
+
+        signature_header = {
+            "timestamp": ts,
+            "expiry_window": 5000,
+            "type": order_type,
+        }
+
+        _, signature = sign_message(signature_header, signature_payload, self.agent_keypair)
+
+        request = {
+            "id": req_id,
+            "params": {
+                order_type: {
+                    "account": self.public_key,
+                    "agent_wallet": self.agent_public_key,
+                    "signature": signature,
+                    "timestamp": ts,
+                    "expiry_window": 5000,
+                    **signature_payload,
+                }
+            }
+        }
+
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_requests[req_id] = fut
+
+        try:
+            await self._send(request)
+            result = await asyncio.wait_for(fut, timeout=timeout)
+            return result
+        except asyncio.TimeoutError:
+            self._pending_requests.pop(req_id, None)
+            raise TimeoutError(f"{order_type} request timed out: {req_id}")
+
     async def create_order_ws(
         self,
         symbol: str,
@@ -704,21 +664,11 @@ class PacificaWSClient:
         Returns:
             Response dict with order_id
         """
-        if not self.public_key or not self.agent_keypair:
-            raise ValueError("Auth required for trading")
-
-        req_id = str(uuid.uuid4())
         cloid = client_order_id or str(uuid.uuid4())
-        ts = int(time.time() * 1000)
 
         if price is None:
             # Market order
             order_type = "create_market_order"
-            signature_header = {
-                "timestamp": ts,
-                "expiry_window": 5000,
-                "type": "create_market_order",
-            }
             signature_payload = {
                 "symbol": symbol.upper(),
                 "reduce_only": reduce_only,
@@ -730,11 +680,6 @@ class PacificaWSClient:
         else:
             # Limit order
             order_type = "create_order"
-            signature_header = {
-                "timestamp": ts,
-                "expiry_window": 5000,
-                "type": "create_order",
-            }
             signature_payload = {
                 "symbol": symbol.upper(),
                 "reduce_only": reduce_only,
@@ -745,33 +690,7 @@ class PacificaWSClient:
                 "client_order_id": cloid,
             }
 
-        _, signature = sign_message(signature_header, signature_payload, self.agent_keypair)
-
-        request = {
-            "id": req_id,
-            "params": {
-                order_type: {
-                    "account": self.public_key,
-                    "agent_wallet": self.agent_public_key,
-                    "signature": signature,
-                    "timestamp": ts,
-                    "expiry_window": 5000,
-                    **signature_payload,
-                }
-            }
-        }
-
-        # Create future for response
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending_requests[req_id] = fut
-
-        try:
-            await self._send(request)
-            result = await asyncio.wait_for(fut, timeout=timeout)
-            return result
-        except asyncio.TimeoutError:
-            self._pending_requests.pop(req_id, None)
-            raise TimeoutError(f"Order request timed out: {req_id}")
+        return await self._send_signed_request(order_type, signature_payload, timeout)
 
     async def cancel_order_ws(
         self,
@@ -791,20 +710,9 @@ class PacificaWSClient:
         Returns:
             Response dict
         """
-        if not self.public_key or not self.agent_keypair:
-            raise ValueError("Auth required for trading")
-
         if not order_id and not client_order_id:
             raise ValueError("order_id or client_order_id required")
 
-        req_id = str(uuid.uuid4())
-        ts = int(time.time() * 1000)
-
-        signature_header = {
-            "timestamp": ts,
-            "expiry_window": 5000,
-            "type": "cancel_order",
-        }
         signature_payload: Dict[str, Any] = {
             "symbol": symbol.upper(),
         }
@@ -813,32 +721,7 @@ class PacificaWSClient:
         if client_order_id:
             signature_payload["client_order_id"] = client_order_id
 
-        _, signature = sign_message(signature_header, signature_payload, self.agent_keypair)
-
-        request = {
-            "id": req_id,
-            "params": {
-                "cancel_order": {
-                    "account": self.public_key,
-                    "agent_wallet": self.agent_public_key,
-                    "signature": signature,
-                    "timestamp": ts,
-                    "expiry_window": 5000,
-                    **signature_payload,
-                }
-            }
-        }
-
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending_requests[req_id] = fut
-
-        try:
-            await self._send(request)
-            result = await asyncio.wait_for(fut, timeout=timeout)
-            return result
-        except asyncio.TimeoutError:
-            self._pending_requests.pop(req_id, None)
-            raise TimeoutError(f"Cancel request timed out: {req_id}")
+        return await self._send_signed_request("cancel_order", signature_payload, timeout)
 
     async def cancel_all_orders_ws(
         self,
@@ -856,17 +739,6 @@ class PacificaWSClient:
         Returns:
             Response dict with cancelled_count
         """
-        if not self.public_key or not self.agent_keypair:
-            raise ValueError("Auth required for trading")
-
-        req_id = str(uuid.uuid4())
-        ts = int(time.time() * 1000)
-
-        signature_header = {
-            "timestamp": ts,
-            "expiry_window": 5000,
-            "type": "cancel_all_orders",
-        }
         signature_payload: Dict[str, Any] = {
             "all_symbols": symbol is None,
             "exclude_reduce_only": exclude_reduce_only,
@@ -874,32 +746,7 @@ class PacificaWSClient:
         if symbol:
             signature_payload["symbol"] = symbol.upper()
 
-        _, signature = sign_message(signature_header, signature_payload, self.agent_keypair)
-
-        request = {
-            "id": req_id,
-            "params": {
-                "cancel_all_orders": {
-                    "account": self.public_key,
-                    "agent_wallet": self.agent_public_key,
-                    "signature": signature,
-                    "timestamp": ts,
-                    "expiry_window": 5000,
-                    **signature_payload,
-                }
-            }
-        }
-
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending_requests[req_id] = fut
-
-        try:
-            await self._send(request)
-            result = await asyncio.wait_for(fut, timeout=timeout)
-            return result
-        except asyncio.TimeoutError:
-            self._pending_requests.pop(req_id, None)
-            raise TimeoutError(f"Cancel all request timed out: {req_id}")
+        return await self._send_signed_request("cancel_all_orders", signature_payload, timeout)
 
     async def update_leverage_ws(
         self,
@@ -917,48 +764,12 @@ class PacificaWSClient:
         Returns:
             Response dict
         """
-        if not self.public_key or not self.agent_keypair:
-            raise ValueError("Auth required for update_leverage")
-
-        req_id = str(uuid.uuid4())
-        ts = int(time.time() * 1000)
-
-        signature_header = {
-            "timestamp": ts,
-            "expiry_window": 5000,
-            "type": "update_leverage",
-        }
         signature_payload = {
             "symbol": symbol.upper(),
             "leverage": leverage,
         }
 
-        _, signature = sign_message(signature_header, signature_payload, self.agent_keypair)
-
-        request = {
-            "id": req_id,
-            "params": {
-                "update_leverage": {
-                    "account": self.public_key,
-                    "agent_wallet": self.agent_public_key,
-                    "signature": signature,
-                    "timestamp": ts,
-                    "expiry_window": 5000,
-                    **signature_payload,
-                }
-            }
-        }
-
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending_requests[req_id] = fut
-
-        try:
-            await self._send(request)
-            result = await asyncio.wait_for(fut, timeout=timeout)
-            return result
-        except asyncio.TimeoutError:
-            self._pending_requests.pop(req_id, None)
-            raise TimeoutError(f"Update leverage request timed out: {req_id}")
+        return await self._send_signed_request("update_leverage", signature_payload, timeout)
 
 
 # ----------------------------
@@ -1018,11 +829,11 @@ class PacificaWSPool:
             self._clients[key] = client
             return client
 
-    async def release(self, _public_key: str):
+    async def release(self, _public_key: str) -> None:
         """Release a client (does not close, keeps for reuse)"""
         pass
 
-    async def close_all(self):
+    async def close_all(self) -> None:
         """Close all connections"""
         async with self._lock:
             for client in self._clients.values():

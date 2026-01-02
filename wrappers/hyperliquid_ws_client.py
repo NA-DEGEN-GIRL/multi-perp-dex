@@ -1,73 +1,20 @@
 import asyncio
 import json
-import os
-import random
-import re
-from typing import Any, Dict, List, Optional, Tuple
-import websockets
-from websockets.exceptions import ConnectionClosed, ConnectionClosedOK, InvalidStatusCode  # type: ignore
 import logging
-from logging.handlers import RotatingFileHandler
+from typing import Any, Dict, List, Optional, Tuple
+from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 
-ws_logger = logging.getLogger("ws")
-def _ensure_ws_logger():
-    """
-    WebSocket 전용 파일 핸들러를 한 번만 부착.
-    - 기본 파일: ./ws.log
-    - 기본 레벨: INFO
-    - 기본 전파: False (루트 로그와 중복 방지)
-    환경변수:
-      PDEX_WS_LOG_FILE=/path/to/ws.log
-      PDEX_WS_LOG_LEVEL=DEBUG|INFO|...
-      PDEX_WS_LOG_CONSOLE=0|1
-      PDEX_WS_PROPAGATE=0|1
-    """
-    if getattr(ws_logger, "_ws_logger_attached", False):
-        return
+from wrappers.base_ws_client import BaseWSClient, _json_dumps
 
-    lvl_name = os.getenv("PDEX_WS_LOG_LEVEL", "INFO").upper()
-    level = getattr(logging, lvl_name, logging.INFO)
-    log_file = os.path.abspath(os.getenv("PDEX_WS_LOG_FILE", "ws.log"))
-    to_console = os.getenv("PDEX_WS_LOG_CONSOLE", "0") == "1"
-    propagate = os.getenv("PDEX_WS_PROPAGATE", "0") == "1"
+logger = logging.getLogger(__name__)
 
-    # 포맷 + 중복 핸들러 제거
-    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
-    for h in list(ws_logger.handlers):
-        ws_logger.removeHandler(h)
-
-    # 파일 핸들러(회전)
-    fh = RotatingFileHandler(log_file, maxBytes=5_000_000, backupCount=2, encoding="utf-8")
-    fh.setFormatter(fmt)
-    fh.setLevel(logging.NOTSET)  # 핸들러는 로거 레벨만 따름
-    ws_logger.addHandler(fh)
-
-    # 콘솔(옵션)
-    if to_console:
-        sh = logging.StreamHandler()
-        sh.setFormatter(fmt)
-        sh.setLevel(logging.NOTSET)
-        ws_logger.addHandler(sh)
-
-    ws_logger.setLevel(level)
-    ws_logger.propagate = propagate
-    ws_logger._ws_logger_attached = True
-    ws_logger.info("[WS-LOG] attached file=%s level=%s console=%s propagate=%s",
-                   log_file, lvl_name, to_console, propagate)
-
-# 모듈 import 시 한 번 설정
-_ensure_ws_logger()
-
-DEFAULT_HTTP_BASE = "https://api.hyperliquid.xyz"  # 메인넷
-DEFAULT_WS_PATH = "/ws"                            # WS 엔드포인트
+HYPERLIQUID_WS_URL = "wss://api.hyperliquid.xyz/ws"  # 메인넷 WS
 WS_CONNECT_TIMEOUT = 15
 WS_READ_TIMEOUT = 60
 PING_INTERVAL = 20
 RECONNECT_MIN = 1.0
 RECONNECT_MAX = 8.0
 
-def json_dumps(obj: Any) -> str:
-    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
 
 def _clean_coin_key_for_perp(key: str) -> Optional[str]:
     """
@@ -106,25 +53,31 @@ def _sub_key(sub: dict) -> str:
     c = (sub.get("coin") or "").upper()
     return f"{t}|u={u}|d={d}|c={c}"
 
-class HLWSClientRaw:
+class HLWSClientRaw(BaseWSClient):
     """
     최소 WS 클라이언트:
     - 단건 구독 메시지: {"method":"subscribe","subscription": {...}}
     - ping: {"method":"ping"}
     - 자동 재연결/재구독
     - Spot 토큰 인덱스 맵을 REST로 1회 로드하여 '@{index}' 키를 Spot 심볼로 변환
+
+    BaseWSClient를 상속하지만, 대부분의 로직은 고유 구현 유지.
     """
-    def __init__(self, ws_url: str, dex: Optional[str], address: Optional[str], coins: List[str], http_base: str):
-        self.ws_url = ws_url
-        self.http_base = (http_base.rstrip("/") or DEFAULT_HTTP_BASE)
-        
+
+    WS_URL = HYPERLIQUID_WS_URL
+    PING_INTERVAL = PING_INTERVAL
+    RECONNECT_MIN = RECONNECT_MIN
+    RECONNECT_MAX = RECONNECT_MAX
+
+    def __init__(self, dex: Optional[str] = None, address: Optional[str] = None):
+        super().__init__()
+
         self.dex = dex.lower() if dex else None
         self.address = address
 
-        self.conn: Optional[websockets.WebSocketClientProtocol] = None
+        # self._ws는 BaseWSClient에서 상속
         self._stop = asyncio.Event()
         self._ready = asyncio.Event()  # 연결 완료 시그널 (Pool에서 race condition 방지용)
-        self._tasks: List[asyncio.Task] = []
 
         # --------- 멀티-유저 캐시(주소 소문자 키) ---------
         self._user_subs: set[str] = set()  # 이미 구독한 user 주소 집합(소문자)
@@ -180,7 +133,7 @@ class HLWSClientRaw:
         payload:  Info 또는 Exchange payload
         반환: 서버 응답의 data.response(dict)
         """
-        if not self.conn:
+        if not self._ws:
             raise RuntimeError("WebSocket is not connected")
         req_id = self._next_post_id()
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -193,7 +146,7 @@ class HLWSClientRaw:
                 "payload": payload,
             },
         }
-        await self.conn.send(json_dumps(msg))
+        await self._ws.send(_json_dumps(msg))
         try:
             resp = await asyncio.wait_for(fut, timeout=timeout)
             # resp는 {"type":"info"|"action"|"error","payload": ...}
@@ -407,7 +360,7 @@ class HLWSClientRaw:
 
     @property
     def connected(self) -> bool:
-        return self.conn is not None
+        return self._ws is not None and self._running
     
     async def ensure_connected_and_subscribed(self) -> None:
         if not self.connected:
@@ -446,11 +399,11 @@ class HLWSClientRaw:
             if key in self._active_subs:
                 return
             # conn이 None이면 스킵 (재연결 후 _resub_all_channels에서 재구독됨)
-            if not self.conn:
-                ws_logger.warning(f"_send_subscribe skipped (conn is None): {key}")
+            if not self._ws:
+                logger.warning(f"_send_subscribe skipped (conn is None): {key}")
                 return
             payload = {"method": "subscribe", "subscription": sub}
-            await self.conn.send(json.dumps(payload, separators=(",", ":")))
+            await self._ws.send(_json_dumps(payload))
             self._active_subs.add(key)
 
     def _normalize_position(self, pos: Dict[str, Any]) -> Dict[str, Any]:
@@ -537,82 +490,42 @@ class HLWSClientRaw:
 
         return None
 
-    async def connect(self) -> None:
-        """
-        서버가 429를 반환하는 경우가 있어, 지수 백오프(+지터)로 재시도합니다.
-        Retry-After 헤더가 있으면 우선 존중합니다.
-        """
-        max_attempts = 6            # comment: 총 6회(예: ~1.5s → ~30s까지 확대)
-        base = 0.5                  # comment: 기본 대기 0.5초
-        cap = 30.0                  # comment: 최대 대기 30초
-        last_exc = None
-        for attempt in range(1, max_attempts + 1):
-            try:
-                # 기존 websockets.connect 호출
-                self.conn = await websockets.connect(
-                    self.ws_url,
-                    ping_interval=None,
-                    open_timeout=WS_CONNECT_TIMEOUT,  # 기존 상수 재사용
-                )
-                # 수신 루프/핵심 구독 등 기존 로직
-                # keepalive task (JSON ping)
-                self._tasks.append(asyncio.create_task(self._ping_loop(), name="ping"))
-                # listen task
-                self._tasks.append(asyncio.create_task(self._listen_loop(), name="listen"))
-                return
-            except InvalidStatusCode as e:
-                last_exc = e
-                status = getattr(e, "status_code", None) or getattr(e, "code", None)
-                if status != 429:
-                    # 429 이외는 즉시 전파(필요시 403/503도 백오프에 포함 가능)
-                    raise
-                # 429 → Retry-After 헤더 우선
-                headers = getattr(e, "headers", None) or getattr(e, "response_headers", None) or {}
-                retry_after = None
-                try:
-                    # websockets의 headers 타입에 따라 dict/Headers 둘 다 대응
-                    ra = headers.get("Retry-After") if hasattr(headers, "get") else None
-                    retry_after = float(ra) if ra is not None else None
-                except Exception:
-                    retry_after = None
-
-                if retry_after is None:
-                    # 지수 백오프 + 지터
-                    backoff = min(cap, base * (2 ** (attempt - 1)))
-                    jitter = random.uniform(0, backoff * 0.2)
-                    sleep_for = backoff + jitter
-                else:
-                    sleep_for = max(0.0, retry_after)
-
-                # 로그를 남기고 다음 시도
-                # ws_logger.debug(f"WS 429 on connect, retry in {sleep_for:.2f}s (attempt {attempt}/{max_attempts})")
-                await asyncio.sleep(sleep_for)
-                continue
-            except Exception as e:
-                last_exc = e
-                # 네트워크 오류 등: 짧게 리트라이(옵션). 현재는 즉시 전파.
-                raise
-        # 모든 시도 실패
-        raise last_exc or RuntimeError("WS connect failed with 429")
+    async def connect(self) -> bool:
+        """WS 연결 (base class 429 대응 사용)"""
+        return await super().connect()
 
     async def close(self) -> None:
+        self._running = False
         self._stop.set()
-        for t in self._tasks:
-            if not t.done():
-                t.cancel()
-        self._tasks.clear()
-        if self.conn:
-            try:
-                await self.conn.close()
-            except Exception:
-                pass
-        self.conn = None
+
+        # BaseWSClient 패턴: 개별 task 취소
+        if self._ping_task and not self._ping_task.done():
+            self._ping_task.cancel()
+        if self._recv_task and not self._recv_task.done():
+            self._recv_task.cancel()
+
+        await self._safe_close(self._ws)
+        self._ws = None
+
+    # ==================== Abstract Method Implementations ====================
+
+    async def _handle_message(self, data: Dict[str, Any]) -> None:
+        """BaseWSClient 추상 메서드 구현 - 기존 _dispatch 호출"""
+        self._dispatch(data)
+
+    async def _resubscribe(self) -> None:
+        """BaseWSClient 추상 메서드 구현 - 기존 resubscribe 호출"""
+        await self.resubscribe()
+
+    def _build_ping_message(self) -> Optional[str]:
+        """BaseWSClient 추상 메서드 구현 - JSON ping"""
+        return _json_dumps({"method": "ping"})
 
     async def subscribe(self) -> None:
         """
         단건 구독 전송(중복 방지): build_subscriptions() 결과를 _send_subscribe로 보냅니다.
         """
-        if not self.conn:
+        if not self._ws:
             raise RuntimeError("WebSocket is not connected")
 
         subs = self.build_subscriptions()
@@ -620,7 +533,7 @@ class HLWSClientRaw:
 
         for sub in subs:
             await self._send_subscribe(sub)
-            ws_logger.info(f"SUB -> {json_dumps({'method':'subscribe','subscription':sub})}")
+            logger.info(f"SUB -> {_json_dumps({'method':'subscribe','subscription':sub})}")
 
     async def resubscribe(self) -> None:
         """
@@ -628,7 +541,7 @@ class HLWSClientRaw:
         - 핵심 가격 구독(self._subscriptions: allMids)
         - 사용자 스트림(_user_subs: allDexsClearinghouseState/spotState/openOrders)
         """
-        if not self.conn:
+        if not self._ws:
             return
         # 1) 클라이언트 측 중복 방지 셋 초기화
         self._active_subs.clear()
@@ -636,7 +549,7 @@ class HLWSClientRaw:
         # 2) 가격 채널(allMids) 재구독
         for sub in self._subscriptions or []:
             await self._send_subscribe(sub)
-            ws_logger.info(f"RESUB -> {json_dumps({'method':'subscribe','subscription':sub})}")
+            logger.info(f"RESUB -> {_json_dumps({'method':'subscribe','subscription':sub})}")
 
         # 3) 유저 스트림 재구독 (최소 필요 3종)
         for u in list(self._user_subs):
@@ -646,14 +559,14 @@ class HLWSClientRaw:
                 {"type": "openOrders", "user": u, "dex": "ALL_DEXS"},
             ):
                 await self._send_subscribe(sub)
-                ws_logger.info(f"RESUB(user) -> {json_dumps({'method':'subscribe','subscription':sub})}")
+                logger.info(f"RESUB(user) -> {_json_dumps({'method':'subscribe','subscription':sub})}")
 
         # [ADDED] 4) 오더북 재구독 (count > 0인 것들만)
         for coin in list(self._orderbook_sub_counts.keys()):
             if self._orderbook_sub_counts.get(coin, 0) > 0:
                 sub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
                 await self._send_subscribe(sub)
-                ws_logger.info(f"RESUB(orderbook) -> {json_dumps({'method':'subscribe','subscription':sub})}")
+                logger.info(f"RESUB(orderbook) -> {_json_dumps({'method':'subscribe','subscription':sub})}")
 
     # ---------------------- 루프/콜백 ----------------------
 
@@ -664,50 +577,51 @@ class HLWSClientRaw:
         try:
             while not self._stop.is_set():
                 await asyncio.sleep(PING_INTERVAL)
-                if not self.conn:
+                if not self._ws:
                     continue
                 try:
-                    await self.conn.send(json_dumps({"method": "ping"}))
-                    ws_logger.debug("ping sent (json)")
+                    await self._ws.send(_json_dumps({"method": "ping"}))
+                    logger.debug("ping sent (json)")
                 except Exception as e:
-                    ws_logger.warning(f"ping error: {e}")
+                    logger.warning(f"ping error: {e}")
         except asyncio.CancelledError:
             return
 
-    async def _listen_loop(self) -> None:
-        assert self.conn is not None
-        ws = self.conn
+    async def _recv_loop(self) -> None:
+        """메시지 수신 루프 (BaseWSClient override)"""
+        assert self._ws is not None
+        ws = self._ws
         while not self._stop.is_set():
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=WS_READ_TIMEOUT)
             except asyncio.TimeoutError:
-                ws_logger.warning("recv timeout; forcing reconnect")
+                logger.warning("recv timeout; forcing reconnect")
                 await self._handle_disconnect()
                 break
             except (ConnectionClosed, ConnectionClosedOK):
-                ws_logger.warning("ws closed; reconnecting")
+                logger.warning("ws closed; reconnecting")
                 await self._handle_disconnect()
                 break
             except Exception as e:
-                ws_logger.error(f"recv error: {e}", exc_info=True)
+                logger.error(f"recv error: {e}", exc_info=True)
                 await self._handle_disconnect()
                 break
 
             # 서버 초기 문자열 핸드셰이크 처리
             if isinstance(raw, str) and raw == "Websocket connection established.":
-                ws_logger.debug(raw)
+                logger.debug(raw)
                 continue
 
             try:
                 msg = json.loads(raw)
             except Exception:
-                ws_logger.debug(f"non-json message: {str(raw)[:200]}")
+                logger.debug(f"non-json message: {str(raw)[:200]}")
                 continue
 
             try:
                 self._dispatch(msg)
             except Exception:
-                ws_logger.exception("dispatch error")
+                logger.exception("dispatch error")
 
     def _dispatch(self, msg: Dict[str, Any]) -> None:
         """
@@ -717,19 +631,19 @@ class HLWSClientRaw:
         """
         ch = str(msg.get("channel") or msg.get("type") or "")
         if not ch:
-            ws_logger.debug(f"no channel key in message: {msg}")
+            logger.debug(f"no channel key in message: {msg}")
             return
 
         if ch == "error":
             data_str = str(msg.get("data") or "")
             if "Already subscribed" in data_str:
-                ws_logger.debug(f"[WS info] {data_str}")
+                logger.debug(f"[WS info] {data_str}")
             else:
-                ws_logger.error(f"[WS error] {data_str}")
+                logger.error(f"[WS error] {data_str}")
             return
         
         if ch == "pong":
-            ws_logger.debug("received pong")
+            logger.debug("received pong")
             return
 
         # [ADDED] l2Book 채널 처리
@@ -917,8 +831,8 @@ class HLWSClientRaw:
 
     async def _safe_close_only(self) -> None:
         # 먼저 conn을 None으로 설정 (다른 코드가 죽은 소켓 사용 방지)
-        old_conn = self.conn
-        self.conn = None
+        old_conn = self._ws
+        self._ws = None
         if old_conn:
             try:
                 # 죽은 소켓에서 hang 방지를 위해 timeout 적용
@@ -926,20 +840,15 @@ class HLWSClientRaw:
             except Exception:
                 pass
 
-    async def _reconnect_with_backoff(self) -> None:
-        delay = RECONNECT_MIN
-        while not self._stop.is_set():
-            try:
-                await asyncio.sleep(delay)
-                await self.connect()
-                await self.resubscribe()
-                return
-            except Exception as e:
-                delay = min(RECONNECT_MAX, delay * 2.0) + random.uniform(0.0, 0.5)
+    # _reconnect_with_backoff는 BaseWSClient에서 상속
 
     def get_price(self, symbol: str) -> Optional[float]:
         """Perp/일반 심볼 가격 조회(캐시)."""
         return self.prices.get(symbol.upper())
+
+    def get_mark_price(self, symbol: str) -> Optional[float]:
+        """Get mark price for symbol (alias for get_price)."""
+        return self.get_price(symbol)
 
     # -------------------- [ADDED] Orderbook 기능 --------------------
     def _normalize_symbol_key(self, symbol: str) -> str:
@@ -1037,10 +946,10 @@ class HLWSClientRaw:
                 unsub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
                 msg = {"method": "unsubscribe", "subscription": unsub}
                 async with self._send_lock:
-                    if self.conn:
-                        await self.conn.send(json_dumps(msg))
+                    if self._ws:
+                        await self._ws.send(_json_dumps(msg))
                     else:
-                        ws_logger.warning(f"unsubscribe_orderbook skipped (conn is None): {coin}")
+                        logger.warning(f"unsubscribe_orderbook skipped (conn is None): {coin}")
 
                 # 캐시/이벤트 정리 (lock 유지 상태)
                 self._orderbooks.pop(norm_key, None)
@@ -1051,7 +960,7 @@ class HLWSClientRaw:
 
             return True
         except Exception as e:
-            ws_logger.error(f"unsubscribe_orderbook error: {e}")
+            logger.error(f"unsubscribe_orderbook error: {e}")
             print(f"unsubscribe_orderbook error: {e}")
             return False
 
@@ -1212,8 +1121,6 @@ class HLWSClientPool:
     async def acquire(
         self,
         *,
-        ws_url: str,            # 인터페이스 호환을 위해 남겨두지만, 내부 키로는 사용하지 않음(단일 URL 전제)
-        http_base: str,
         address: Optional[str],
         dex: Optional[str] = None,
         dex_order: Optional[List[str]] = None,
@@ -1236,11 +1143,8 @@ class HLWSClientPool:
             new_socket = False
             if sock is None:
                 sock = HLWSClientRaw(
-                    ws_url=ws_url if ws_url.startswith("wss") else ws_url.replace("http", "wss", 1),
                     dex=None,
                     address=None,
-                    coins=[],
-                    http_base=http_base,
                 )
                 async with self._shared_lock:
                     self._apply_shared_to_socket_unlocked(sock)
@@ -1271,7 +1175,7 @@ class HLWSClientPool:
 
         return sock
 
-    async def release(self, *, ws_url: str, address: Optional[str] = None, client: Optional[HLWSClientRaw] = None) -> None:
+    async def release(self, *, address: Optional[str] = None, client: Optional[HLWSClientRaw] = None) -> None:
         """
         - client를 명시하면 그 소켓을 해제(권장)
         - 아니면 address 매핑으로 소켓을 찾아 해제
