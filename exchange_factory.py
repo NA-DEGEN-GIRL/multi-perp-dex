@@ -115,7 +115,8 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
             api_key = key_params.api_key,
             vault_address = key_params.vault_address,
             builder_fee_pair = key_params.builder_fee_pair,
-            FrontendMarket = key_params.FrontendMarket
+            FrontendMarket = key_params.FrontendMarket,
+            proxy = getattr(key_params, 'proxy', None),
         ).init()
 
     elif exchange_platform == "standx":

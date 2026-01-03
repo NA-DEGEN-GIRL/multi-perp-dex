@@ -22,6 +22,7 @@ class SuperstackExchange(HyperliquidBase):
         builder_fee_pair=None,
         *,
         FrontendMarket=False,
+        proxy=None,
     ):
         super().__init__(
             wallet_address=wallet_address,
@@ -29,6 +30,7 @@ class SuperstackExchange(HyperliquidBase):
             builder_code="0xcdb943570bcb48a6f1d3228d0175598fea19e87b",  # Superstack 고정
             builder_fee_pair=builder_fee_pair,
             FrontendMarket=FrontendMarket,
+            proxy=proxy,
         )
         self.api_key = api_key
 
