@@ -18,11 +18,16 @@ Base WebSocket Client
             return json.dumps({"type": "ping"})
 """
 import asyncio
+import base64
 import json
 import logging
+import os
 import random
+import socket as socket_module
+import ssl
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import websockets
 from websockets.client import WebSocketClientProtocol
@@ -57,7 +62,7 @@ class BaseWSClient(ABC):
     CLOSE_TIMEOUT: float = 2.0
     CONNECT_MAX_ATTEMPTS: int = 6  # 429 대응 최대 재시도
 
-    def __init__(self):
+    def __init__(self, proxy: Optional[str] = None):
         self._ws: Optional[WebSocketClientProtocol] = None
         self._running: bool = False
         self._recv_task: Optional[asyncio.Task] = None
@@ -66,11 +71,23 @@ class BaseWSClient(ABC):
         self._reconnecting: bool = False
         self._ping_fail_count: int = 0
         self._last_recv_time: float = 0.0
+        self._proxy: Optional[str] = proxy  # HTTP proxy URL (e.g., "http://user:pass@host:port")
 
     @property
     def connected(self) -> bool:
         """연결 상태 확인"""
         return self._ws is not None and self._running
+
+    @property
+    def _log_prefix(self) -> str:
+        """로그 prefix (proxy 사용 시 표시)"""
+        base = f"[{self.__class__.__name__}]"
+        if self._proxy:
+            # proxy URL에서 IP만 추출
+            parsed = urlparse(self._proxy)
+            proxy_ip = parsed.hostname or "proxy"
+            return f"{base}[via {proxy_ip}]"
+        return base
 
     async def connect(self) -> bool:
         """
@@ -87,25 +104,101 @@ class BaseWSClient(ABC):
 
         for attempt in range(1, self.CONNECT_MAX_ATTEMPTS + 1):
             try:
-                self._ws = await asyncio.wait_for(
-                    websockets.connect(
-                        self.WS_URL,
-                        ping_interval=None,  # 자체 ping 사용
-                        ping_timeout=None,
-                        close_timeout=5,
-                    ),
-                    timeout=self.WS_CONNECT_TIMEOUT,
-                )
+                # Proxy 사용 시 HTTP CONNECT 터널
+                if self._proxy:
+                    parsed_ws = urlparse(self.WS_URL)
+                    ws_host = parsed_ws.hostname
+                    ws_port = parsed_ws.port or (443 if parsed_ws.scheme == "wss" else 80)
+                    is_ssl = parsed_ws.scheme == "wss"
+
+                    # proxy URL 파싱
+                    parsed_proxy = urlparse(self._proxy)
+                    proxy_host = parsed_proxy.hostname
+                    proxy_port = parsed_proxy.port or 8080
+
+                    # proxy에 연결
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection(proxy_host, proxy_port),
+                        timeout=self.WS_CONNECT_TIMEOUT,
+                    )
+
+                    # HTTP CONNECT 요청
+                    connect_req = f"CONNECT {ws_host}:{ws_port} HTTP/1.1\r\nHost: {ws_host}:{ws_port}\r\n"
+                    if parsed_proxy.username:
+                        # Basic auth
+                        creds = f"{parsed_proxy.username}:{parsed_proxy.password or ''}"
+                        auth = base64.b64encode(creds.encode()).decode()
+                        connect_req += f"Proxy-Authorization: Basic {auth}\r\n"
+                    connect_req += "\r\n"
+
+                    writer.write(connect_req.encode())
+                    await writer.drain()
+
+                    # 응답 확인
+                    response = await asyncio.wait_for(reader.readline(), timeout=10)
+                    if b"200" not in response:
+                        writer.close()
+                        raise RuntimeError(f"Proxy CONNECT failed: {response.decode().strip()}")
+                    # 나머지 헤더 읽기
+                    while True:
+                        line = await reader.readline()
+                        if line == b"\r\n" or line == b"":
+                            break
+
+                    # 터널 연결된 소켓에서 websocket 생성
+                    # writer의 transport에서 socket 추출 후 detach
+                    transport = writer.transport
+                    raw_sock = transport.get_extra_info('socket')
+
+                    # fd를 복제해서 새 socket 생성 (원본 닫아도 유지됨)
+                    new_fd = os.dup(raw_sock.fileno())
+                    new_sock = socket_module.socket(fileno=new_fd)
+                    new_sock.setblocking(False)
+
+                    # 원본 transport/streams 정리
+                    writer.close()
+                    try:
+                        await writer.wait_closed()
+                    except Exception:
+                        pass
+
+                    # SSL wrap이 필요하면 직접 처리
+                    ssl_context = ssl.create_default_context() if is_ssl else None
+
+                    self._ws = await asyncio.wait_for(
+                        websockets.connect(
+                            self.WS_URL,
+                            sock=new_sock,
+                            ssl=ssl_context,
+                            server_hostname=ws_host if is_ssl else None,
+                            ping_interval=None,
+                            ping_timeout=None,
+                            close_timeout=5,
+                        ),
+                        timeout=self.WS_CONNECT_TIMEOUT,
+                    )
+                else:
+                    # 일반 연결 (proxy 없음)
+                    self._ws = await asyncio.wait_for(
+                        websockets.connect(
+                            self.WS_URL,
+                            ping_interval=None,  # 자체 ping 사용
+                            ping_timeout=None,
+                            close_timeout=5,
+                        ),
+                        timeout=self.WS_CONNECT_TIMEOUT,
+                    )
                 self._running = True
                 self._recv_task = asyncio.create_task(self._recv_loop())
                 if self.PING_INTERVAL is not None:
                     self._ping_task = asyncio.create_task(self._ping_loop())
+                print(f"{self._log_prefix} connected")
                 return True
 
             except InvalidStatusCode as e:
                 status = getattr(e, "status_code", None) or getattr(e, "code", None)
                 if status != 429:
-                    msg = f"[{self.__class__.__name__}] connect failed (HTTP {status}): {e}"
+                    msg = f"{self._log_prefix} connect failed (HTTP {status}): {e}"
                     print(msg)
                     logger.error(msg)
                     return False
@@ -126,24 +219,24 @@ class BaseWSClient(ABC):
                 else:
                     sleep_for = max(0.0, retry_after)
 
-                msg = f"[{self.__class__.__name__}] 429 rate limit, retry in {sleep_for:.1f}s (attempt {attempt}/{self.CONNECT_MAX_ATTEMPTS})"
+                msg = f"{self._log_prefix} 429 rate limit, retry in {sleep_for:.1f}s (attempt {attempt}/{self.CONNECT_MAX_ATTEMPTS})"
                 print(msg)
                 logger.warning(msg)
                 await asyncio.sleep(sleep_for)
 
             except asyncio.TimeoutError:
-                msg = f"[{self.__class__.__name__}] connect timeout (attempt {attempt}/{self.CONNECT_MAX_ATTEMPTS})"
+                msg = f"{self._log_prefix} connect timeout (attempt {attempt}/{self.CONNECT_MAX_ATTEMPTS})"
                 print(msg)
                 logger.warning(msg)
                 await asyncio.sleep(base_delay)
 
             except Exception as e:
-                msg = f"[{self.__class__.__name__}] connect failed: {e}"
+                msg = f"{self._log_prefix} connect failed: {e}"
                 print(msg)
                 logger.error(msg)
                 return False
 
-        msg = f"[{self.__class__.__name__}] connect failed after {self.CONNECT_MAX_ATTEMPTS} attempts"
+        msg = f"{self._log_prefix} connect failed after {self.CONNECT_MAX_ATTEMPTS} attempts"
         print(msg)
         logger.error(msg)
         return False
@@ -205,13 +298,13 @@ class BaseWSClient(ABC):
 
             except asyncio.TimeoutError:
                 # 수신 타임아웃 - 연결 죽은 것으로 간주
-                log_msg = f"[{self.__class__.__name__}] recv timeout, reconnecting..."
+                log_msg = f"{self._log_prefix} recv timeout, reconnecting..."
                 print(log_msg)
                 logger.warning(log_msg)
                 await self._handle_disconnect()
                 break
             except ConnectionClosed as e:
-                log_msg = f"[{self.__class__.__name__}] connection closed (code={e.code}), reconnecting..."
+                log_msg = f"{self._log_prefix} connection closed (code={e.code}), reconnecting..."
                 print(log_msg)
                 logger.warning(log_msg)
                 await self._handle_disconnect()
@@ -219,7 +312,7 @@ class BaseWSClient(ABC):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log_msg = f"[{self.__class__.__name__}] recv error: {e}"
+                log_msg = f"{self._log_prefix} recv error: {e}"
                 print(log_msg)
                 logger.error(log_msg)
                 await asyncio.sleep(0.1)
@@ -240,12 +333,12 @@ class BaseWSClient(ABC):
                             # ping 성공 시 카운트 리셋 (pong 응답은 recv_loop에서 처리)
                         except Exception as e:
                             self._ping_fail_count += 1
-                            log_msg = f"[{self.__class__.__name__}] ping failed ({self._ping_fail_count}/{self.PING_FAIL_THRESHOLD}): {e}"
+                            log_msg = f"{self._log_prefix} ping failed ({self._ping_fail_count}/{self.PING_FAIL_THRESHOLD}): {e}"
                             print(log_msg)
                             logger.warning(log_msg)
 
                             if self._ping_fail_count >= self.PING_FAIL_THRESHOLD:
-                                log_msg = f"[{self.__class__.__name__}] ping failed {self.PING_FAIL_THRESHOLD} times, reconnecting..."
+                                log_msg = f"{self._log_prefix} ping failed {self.PING_FAIL_THRESHOLD} times, reconnecting..."
                                 print(log_msg)
                                 logger.warning(log_msg)
                                 self._ping_fail_count = 0
@@ -294,7 +387,7 @@ class BaseWSClient(ABC):
             await self._resubscribe()
             return True
         except Exception as e:
-            msg = f"[{self.__class__.__name__}] reconnect failed: {e}"
+            msg = f"{self._log_prefix} reconnect failed: {e}"
             print(msg)
             logger.error(msg)
             return False
@@ -308,13 +401,13 @@ class BaseWSClient(ABC):
         delay = self.RECONNECT_MIN
         try:
             while self._running:
-                msg = f"[{self.__class__.__name__}] reconnecting in {delay:.1f}s..."
+                msg = f"{self._log_prefix} reconnecting in {delay:.1f}s..."
                 print(msg)
                 logger.info(msg)
                 await asyncio.sleep(delay)
 
                 if await self._do_reconnect():
-                    msg = f"[{self.__class__.__name__}] reconnected"
+                    msg = f"{self._log_prefix} reconnected"
                     print(msg)
                     logger.info(msg)
                     return

@@ -36,3 +36,5 @@ directory_*
 .dev/
 **gpt**
 perp_dex_hedge/
+
+working_proxies.txt

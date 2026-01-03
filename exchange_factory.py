@@ -105,7 +105,8 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
             vault_address = key_params.vault_address,
             builder_code = key_params.builder_code,
             builder_fee_pair = key_params.builder_fee_pair,
-            FrontendMarket = key_params.FrontendMarket
+            FrontendMarket = key_params.FrontendMarket,
+            proxy = getattr(key_params, 'proxy', None),
         ).init()
     
     elif exchange_platform == "superstack":

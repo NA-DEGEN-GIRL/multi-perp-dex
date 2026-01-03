@@ -24,20 +24,35 @@ test_bool = [True, True, False]
 
 async def main():
     
-    HYPERLIQUID_KEY.fetch_by_ws = True
     #HYPERLIQUID_KEY.builder_fee_pair["base"] = (10, 10)
     hyperliquid = await create_exchange('hyperliquid',HYPERLIQUID_KEY)
     await asyncio.sleep(0.2)
     
-    while True:
+    while False:
         res = await hyperliquid.get_orderbook('xyz:XYZ100')
-        print(res)
+        print(res.get('bids', [])[:1], res.get('asks', [])[:1])
         await asyncio.sleep(0.01)
 
-    res2 = await hyperliquid.unsubscribe_orderbook('UBTC/USDC')
-    print(res2)
-    await asyncio.sleep(0.2)
+    price1 = await hyperliquid.get_mark_price(symbol) #,is_spot=is_spot)
+    
+    l_price = price1*0.97
+    res = await hyperliquid.create_order(symbol, 'buy', amount1, price=l_price)
+    print(res)
+    #await asyncio.sleep(0.5)
+    while True:
+        res = await hyperliquid.get_open_orders(symbol)
+        print(res)
+        await asyncio.sleep(0.01)
     return
+    #print(len(res), [od.get('id') for od in res if len(res)>0])
+    #for od in res:
+    #    res = await hyperliquid.cancel_orders(symbol, od)
+    #    print(res)
+
+    #res2 = await hyperliquid.unsubscribe_orderbook('UBTC/USDC')
+    #print(res2)
+    #await asyncio.sleep(0.2)
+    
 
     # superstack test
     #superstack = await create_exchange('superstack',SUPERSTACK_KEY)
@@ -45,29 +60,11 @@ async def main():
 
     res = await hyperliquid.get_collateral()
     print(res)
-    await asyncio.sleep(0.5)
-    return
-    res = await hyperliquid.transfer_to_spot(10)
-    print(res)
-    await asyncio.sleep(0.5)
+    
+    #res = await hyperliquid.transfer_to_spot(10)
+    #print(res)
+    #await asyncio.sleep(0.5)
 
-    res = await hyperliquid.get_collateral()
-    print(res)
-    await asyncio.sleep(1.5)
-
-    res = await hyperliquid.transfer_to_perp(10)
-    print(res)
-    await asyncio.sleep(0.5)
-
-    res = await hyperliquid.get_collateral()
-    print(res)
-    await asyncio.sleep(0.5)
-
-    #available_symbols = await hyperliquid.get_available_symbols()
-    #print(available_symbols)
-
-    res = await hyperliquid.get_spot_balance_ws("UBTC")
-    print(res)
 
     #price1 = await hyperliquid.get_mark_price("UBTC/USDC") #,is_spot=is_spot)
     #print(price1)

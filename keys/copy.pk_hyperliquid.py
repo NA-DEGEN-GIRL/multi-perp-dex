@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, Optional
 @dataclass
 class HyperliquidKEY:
     wallet_address: str         # required
@@ -12,6 +12,7 @@ class HyperliquidKEY:
     builder_fee_pair: dict[str, Tuple[int, int] | list[int] | int]      # optional
     fetch_by_ws: bool           # optional
     FrontendMarket: bool
+    proxy: Optional[str] = None # optional, e.g. "http://user:pass@host:port"
     
 HYPERLIQUID_KEY = HyperliquidKEY(
     wallet_address = None,

@@ -70,8 +70,8 @@ class HLWSClientRaw(BaseWSClient):
     RECONNECT_MIN = RECONNECT_MIN
     RECONNECT_MAX = RECONNECT_MAX
 
-    def __init__(self, dex: Optional[str] = None, address: Optional[str] = None):
-        super().__init__()
+    def __init__(self, dex: Optional[str] = None, address: Optional[str] = None, proxy: Optional[str] = None):
+        super().__init__(proxy=proxy)
 
         self.dex = dex.lower() if dex else None
         self.address = address
@@ -1061,7 +1061,7 @@ class HLWSClientRaw(BaseWSClient):
             ev.set()
 
 class HLWSClientPool:
-    USER_SUB_LIMIT = 1  # comment: 한 WS 소켓당 허용할 유저 스트림 수 제한
+    USER_SUB_LIMIT = 10  # comment: 한 WS 소켓당 허용할 유저 스트림 수 제한
     """
     (ws_url, address) 단위로 HLWSClientRaw를 1개만 생성/공유하는 풀.
     - 동일 주소에서 다중 DEX allMids는 하나의 커넥션에서 추가 구독한다.

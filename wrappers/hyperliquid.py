@@ -23,6 +23,7 @@ class HyperliquidExchange(HyperliquidBase):
         builder_fee_pair=None,
         *,
         FrontendMarket=False,
+        proxy=None,
     ):
         super().__init__(
             wallet_address=wallet_address,
@@ -30,6 +31,7 @@ class HyperliquidExchange(HyperliquidBase):
             builder_code=builder_code,
             builder_fee_pair=builder_fee_pair,
             FrontendMarket=FrontendMarket,
+            proxy=proxy,
         )
         self.by_agent = by_agent
         self.wallet_private_key = wallet_private_key #if not by_agent else None

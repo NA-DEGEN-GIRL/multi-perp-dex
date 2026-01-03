@@ -39,14 +39,16 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         builder_fee_pair: Optional[dict] = None,
         *,
         FrontendMarket: bool = False,
+        proxy: Optional[str] = None,
     ):
         super().__init__()
         self.has_spot = True
-        
+
         self.wallet_address = wallet_address
         self.vault_address = vault_address
         self.builder_code = self._resolve_builder_code(builder_code)
         self.builder_fee_pair = builder_fee_pair
+        self.proxy = proxy  # e.g. "http://proxy.example.com:8080" or "socks5://..."
 
         self.http_base = HL_BASE_URL
         self.ws_base = HL_BASE_WS
@@ -190,13 +192,20 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
     async def close(self):
         if self._http and not self._http.closed:
             await self._http.close()
-        if self._ws_pool_key and self.ws_client:
-            from wrappers.hyperliquid_ws_client import WS_POOL
-            addr = self._ws_pool_key
-            try:
-                await WS_POOL.release(address=addr, client=self.ws_client)
-            except Exception:
-                pass
+        if self.ws_client:
+            if self._ws_pool_key:
+                # Pool에서 가져온 경우 release
+                from wrappers.hyperliquid_ws_client import WS_POOL
+                try:
+                    await WS_POOL.release(address=self._ws_pool_key, client=self.ws_client)
+                except Exception:
+                    pass
+            else:
+                # Proxy 직접 연결한 경우 close
+                try:
+                    await self.ws_client.close()
+                except Exception:
+                    pass
             self._ws_pool_key = None
             self.ws_client = None
 
@@ -345,22 +354,42 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
     async def _create_ws_client(self):
         if self.ws_client is not None:
             return
-        from wrappers.hyperliquid_ws_client import WS_POOL
+
         address = self.vault_address or self.wallet_address
-        client = await WS_POOL.acquire(
-            address=address,
-            dex=None,
-            dex_order=self.dex_list,
-            idx2name=self.spot_index_to_name,
-            name2idx=self.spot_name_to_index,
-            pair_by_index=self.spot_asset_index_to_pair,
-            bq_by_index=self.spot_asset_index_to_bq,
-        )
+
+        # Proxy 사용 시 pool 안 쓰고 직접 생성 (proxy별 독립 연결)
+        if self.proxy:
+            from wrappers.hyperliquid_ws_client import HLWSClientRaw
+            client = HLWSClientRaw(dex=None, address=address, proxy=self.proxy)
+            client.set_spot_meta(
+                self.spot_index_to_name,
+                self.spot_name_to_index,
+                self.spot_asset_index_to_pair,
+                self.spot_asset_index_to_bq,
+            )
+            await client.connect()
+            await client.subscribe()  # allMids 등 기본 구독
+            await client.ensure_user_streams(address)  # 유저 스트림 구독
+            self.ws_client = client
+            self._ws_pool_key = None  # pool 안 씀
+        else:
+            # 일반: pool 사용
+            from wrappers.hyperliquid_ws_client import WS_POOL
+            client = await WS_POOL.acquire(
+                address=address,
+                dex=None,
+                dex_order=self.dex_list,
+                idx2name=self.spot_index_to_name,
+                name2idx=self.spot_name_to_index,
+                pair_by_index=self.spot_asset_index_to_pair,
+                bq_by_index=self.spot_asset_index_to_bq,
+            )
+            self.ws_client = client
+            self._ws_pool_key = (address or "").lower()
+
         for dex in self.dex_list:
             if dex != "hl":
                 await client.ensure_allmids_for(dex)
-        self.ws_client = client
-        self._ws_pool_key = (address or "").lower()
 
     # -------------------- 자산 해석 --------------------
     async def _resolve_perp_asset_and_szdec(self, dex: Optional[str], coin_key: str):
@@ -776,7 +805,12 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             # REST 시도
             try:
                 s = self._session()
-                async with s.post(f"{self.http_base}/exchange", json=payload, headers={"Content-Type": "application/json"}) as r:
+                async with s.post(
+                    f"{self.http_base}/exchange",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    proxy=self.proxy,
+                ) as r:
                     r.raise_for_status()
                     return await r.json()
             except Exception as e:
