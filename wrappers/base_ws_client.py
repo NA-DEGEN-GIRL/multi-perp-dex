@@ -289,7 +289,9 @@ class BaseWSClient(ABC):
                     self._recv_task.cancel()
 
                 try:
-                    print(f"[{self.__class__.__name__}] websockets.connect starting...")
+                    print(f"[{self.__class__.__name__}] websockets.connect starting... (timeout={self.WS_CONNECT_TIMEOUT}s)")
+                    import time as _time
+                    _t0 = _time.time()
                     self._ws = await asyncio.wait_for(
                         websockets.connect(
                             self.WS_URL,
@@ -299,7 +301,7 @@ class BaseWSClient(ABC):
                         ),
                         timeout=self.WS_CONNECT_TIMEOUT,
                     )
-                    print(f"[{self.__class__.__name__}] websockets.connect done, starting tasks...")
+                    print(f"[{self.__class__.__name__}] websockets.connect done in {_time.time()-_t0:.2f}s, starting tasks...")
                     self._recv_task = asyncio.create_task(self._recv_loop())
                     if self.PING_INTERVAL is not None:
                         self._ping_task = asyncio.create_task(self._ping_loop())
