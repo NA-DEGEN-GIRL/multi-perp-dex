@@ -395,15 +395,12 @@ class HLWSClientRaw(BaseWSClient):
         """subscribe 메시지 전송(중복 방지)."""
         key = _sub_key(sub)
         if key in self._active_subs:
-            print(f"[HyperliquidWS] Subscribe skip (already subscribed): {key}")
             return
         async with self._send_lock:
             if key in self._active_subs:
-                print(f"[HyperliquidWS] Subscribe skip (already subscribed, in lock): {key}")
                 return
             # conn이 None이면 스킵 (재연결 후 _resub_all_channels에서 재구독됨)
             if not self._ws:
-                print(f"[HyperliquidWS] Subscribe skip (not connected): {key}")
                 logger.warning(f"_send_subscribe skipped (conn is None): {key}")
                 return
             payload = {"method": "subscribe", "subscription": sub}
@@ -927,11 +924,8 @@ class HLWSClientRaw(BaseWSClient):
 
             # 첫 구독자일 때만 실제 구독 메시지 전송 (lock 유지)
             if current_count == 0:
-                print(f"[HyperliquidWS] Subscribe orderbook (first subscriber): {symbol} -> coin={coin}")
                 sub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
                 await self._send_subscribe(sub)
-            else:
-                print(f"[HyperliquidWS] Subscribe orderbook (ref count: {current_count} -> {current_count + 1}): {symbol}")
 
     async def unsubscribe_orderbook(self, symbol: str) -> bool:
         """
@@ -948,7 +942,6 @@ class HLWSClientRaw(BaseWSClient):
 
                 # 이미 구독 안 되어있으면 무시
                 if current_count <= 0:
-                    print(f"[HyperliquidWS] Unsubscribe orderbook skip (not subscribed): {symbol}")
                     return True
 
                 # 카운트 감소
@@ -957,18 +950,16 @@ class HLWSClientRaw(BaseWSClient):
 
                 # 마지막 구독자가 아니면 여기서 종료
                 if new_count > 0:
-                    print(f"[HyperliquidWS] Unsubscribe orderbook (ref count: {current_count} -> {new_count}): {symbol}")
                     return True
 
                 # 마지막 구독자: lock 유지한 상태에서 unsubscribe 처리
-                print(f"[HyperliquidWS] Unsubscribe orderbook (last subscriber): {symbol} -> coin={coin}")
+                print(f"[HyperliquidWS] Unsubscribe: l2Book/{coin}")
                 unsub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
                 msg = {"method": "unsubscribe", "subscription": unsub}
                 async with self._send_lock:
                     if self._ws:
                         await self._ws.send(_json_dumps(msg))
                     else:
-                        print(f"[HyperliquidWS] Unsubscribe orderbook skip (not connected): {symbol}")
                         logger.warning(f"unsubscribe_orderbook skipped (conn is None): {coin}")
 
                 # 캐시/이벤트 정리 (lock 유지 상태)

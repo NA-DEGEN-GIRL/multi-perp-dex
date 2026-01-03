@@ -458,7 +458,6 @@ class BackpackWSClient(BaseWSClient):
     async def subscribe_orderbook(self, symbol: str) -> None:
         """Subscribe to orderbook (depth) channel for symbol"""
         if symbol in self._orderbook_subs:
-            print(f"[BackpackWS] Subscribe skip (already subscribed): orderbook/{symbol}")
             return
 
         print(f"[BackpackWS] Subscribe: orderbook/{symbol}")
@@ -475,7 +474,6 @@ class BackpackWSClient(BaseWSClient):
     async def unsubscribe_orderbook(self, symbol: str) -> None:
         """Unsubscribe from orderbook (depth) channel"""
         if symbol not in self._orderbook_subs:
-            print(f"[BackpackWS] Unsubscribe skip (not subscribed): orderbook/{symbol}")
             return
 
         print(f"[BackpackWS] Unsubscribe: orderbook/{symbol}")
@@ -490,7 +488,6 @@ class BackpackWSClient(BaseWSClient):
     async def subscribe_mark_price(self, symbol: str) -> None:
         """Subscribe to mark price channel for symbol"""
         if symbol in self._price_subs:
-            print(f"[BackpackWS] Subscribe skip (already subscribed): markPrice/{symbol}")
             return
 
         print(f"[BackpackWS] Subscribe: markPrice/{symbol}")
@@ -504,7 +501,6 @@ class BackpackWSClient(BaseWSClient):
     async def unsubscribe_mark_price(self, symbol: str) -> None:
         """Unsubscribe from mark price channel"""
         if symbol not in self._price_subs:
-            print(f"[BackpackWS] Unsubscribe skip (not subscribed): markPrice/{symbol}")
             return
 
         print(f"[BackpackWS] Unsubscribe: markPrice/{symbol}")
@@ -541,7 +537,6 @@ class BackpackWSClient(BaseWSClient):
     async def subscribe_position(self) -> None:
         """Subscribe to position updates (requires auth)"""
         if self._position_subscribed:
-            print("[BackpackWS] Subscribe skip (already subscribed): position")
             return
 
         if not self._secret_key:
@@ -553,7 +548,6 @@ class BackpackWSClient(BaseWSClient):
     async def unsubscribe_position(self) -> None:
         """Unsubscribe from position updates"""
         if not self._position_subscribed:
-            print("[BackpackWS] Unsubscribe skip (not subscribed): position")
             return
 
         print("[BackpackWS] Unsubscribe: position")
@@ -564,7 +558,6 @@ class BackpackWSClient(BaseWSClient):
     async def subscribe_orders(self) -> None:
         """Subscribe to order updates (requires auth)"""
         if self._order_subscribed:
-            print("[BackpackWS] Subscribe skip (already subscribed): orders")
             return
 
         if not self._secret_key:
@@ -576,7 +569,6 @@ class BackpackWSClient(BaseWSClient):
     async def unsubscribe_orders(self) -> None:
         """Unsubscribe from order updates"""
         if not self._order_subscribed:
-            print("[BackpackWS] Unsubscribe skip (not subscribed): orders")
             return
 
         print("[BackpackWS] Unsubscribe: orders")
