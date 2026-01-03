@@ -25,8 +25,17 @@ test_bool = [True, True, False]
 async def main():
     
     #HYPERLIQUID_KEY.builder_fee_pair["base"] = (10, 10)
+    HYPERLIQUID_KEY.proxy = None
     hyperliquid = await create_exchange('hyperliquid',HYPERLIQUID_KEY)
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.5)
+
+    #res = await hyperliquid.get_available_symbols()
+    #for s in res:
+    #    print(res[s])
+    
+    res = await hyperliquid.get_orderbook('kpepe')
+    print(res.get('bids', [])[:1], res.get('asks', [])[:1])
+    return
     
     while False:
         res = await hyperliquid.get_orderbook('xyz:XYZ100')

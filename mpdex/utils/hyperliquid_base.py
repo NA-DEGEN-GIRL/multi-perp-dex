@@ -367,6 +367,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
                 self.spot_asset_index_to_pair,
                 self.spot_asset_index_to_bq,
             )
+            client.set_perp_original_names(self.perp_asset_map)
             await client.connect()
             await client.subscribe()  # allMids 등 기본 구독
             await client.ensure_user_streams(address)  # 유저 스트림 구독
@@ -384,6 +385,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
                 pair_by_index=self.spot_asset_index_to_pair,
                 bq_by_index=self.spot_asset_index_to_bq,
             )
+            client.set_perp_original_names(self.perp_asset_map)
             self.ws_client = client
             self._ws_pool_key = (address or "").lower()
 
@@ -399,7 +401,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         - dex='xyz'(HIP-3):   key = coin_key(원문 'xyz:COIN')
         """
         key = coin_key if dex else coin_key.upper()
-        return self.perp_asset_map.get(key, (None, 0, 1, False, 0))
+        return self.perp_asset_map.get(key, (None, 0, 1, False, 0, None))
 
     async def _resolve_asset_id_for_symbol(self, symbol: str, *, is_spot: bool) -> int:
         raw = str(symbol).strip()
@@ -444,7 +446,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             return 'USDC'
         
         dex, coin_key = parse_hip3_symbol(str(symbol).strip())
-        _, _, _, _, quote_id = self.perp_asset_map.get(coin_key, (None, 0, 1, False, 0))
+        _, _, _, _, quote_id, _ = self.perp_asset_map.get(coin_key, (None, 0, 1, False, 0, None))
         return self.spot_index_to_name.get(quote_id, "USDC")
 
     # -------------------- 가격/포지션/담보 (공통) --------------------

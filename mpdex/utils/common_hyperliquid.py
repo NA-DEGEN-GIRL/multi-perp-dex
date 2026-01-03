@@ -483,13 +483,15 @@ async def init_perp_meta_cache(s: aiohttp.ClientSession,
                 
                 if meta_idx == 0:
                     key = name.upper()                 # 메인(HL)
+                    original_name = name               # 오더북 구독시 case-sensitive 하므로 원본 보존
                     asset_id = int(local_idx)
                 else:
                     key = name                         # HIP-3: 'dex:COIN'
+                    original_name = name               # HIP-3도 원본 보존
                     asset_id = 100000 + meta_idx * 10000 + local_idx
 
-                
-                perp_asset_map[key] = (asset_id, szd, max_lev, isolated, collateral_token_id)
+                # (asset_id, szd, max_lev, isolated, collateral_token_id, original_name)
+                perp_asset_map[key] = (asset_id, szd, max_lev, isolated, collateral_token_id, original_name)
     except Exception as e:
         print(e)
 

@@ -541,7 +541,7 @@ alert('Signing/Submit failed: ' + e.message);
 			return {"message":"already updated!"}
 
 		symbol_ws = self._symbol_convert_for_ws(symbol)
-		_, _, max_leverage, only_isolated, _ = self.perp_asset_map.get(symbol_ws, (None,None,1,False,0))
+		_, _, max_leverage, only_isolated, _, _ = self.perp_asset_map.get(symbol_ws, (None,None,1,False,0,None))
 		margin_mode = "ISOLATED" if only_isolated else "CROSS"
 		
 		if not leverage:

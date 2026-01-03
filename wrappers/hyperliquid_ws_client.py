@@ -50,7 +50,7 @@ def _sub_key(sub: dict) -> str:
     t = str(sub.get("type"))
     u = (sub.get("user") or "").lower()
     d = (sub.get("dex") or "").lower()
-    c = (sub.get("coin") or "").upper()
+    c = sub.get("coin") or ""  # coin은 case-sensitive (kPEPE 등)
     return f"{t}|u={u}|d={d}|c={c}"
 
 class HLWSClientRaw(BaseWSClient):
@@ -103,6 +103,9 @@ class HLWSClientRaw(BaseWSClient):
         self.spot_name_to_index: Dict[str, int] = {}
         self.spot_asset_index_to_pair: Dict[int, str] = {}
         self.spot_asset_index_to_bq: Dict[int, tuple[str, str]] = {}
+
+        # Perp 원본 이름 매핑 (대문자키 -> 원본, 오더북 구독 시 case-sensitive 대응)
+        self.perp_original_names: Dict[str, str] = {}
 
         self._subscriptions: List[Dict[str, Any]] = []
         self._send_lock = asyncio.Lock()
@@ -291,6 +294,17 @@ class HLWSClientRaw(BaseWSClient):
         self.spot_name_to_index = {str(k).upper(): int(v) for k, v in (name2idx or {}).items()}
         self.spot_asset_index_to_pair = dict(pair_by_index or {})
         self.spot_asset_index_to_bq = dict(bq_by_index or {})
+
+    def set_perp_original_names(self, perp_asset_map: Dict[str, tuple]) -> None:
+        """
+        perp_asset_map에서 원본 이름 매핑 추출.
+        key(대문자) -> original_name (6번째 요소)
+        """
+        self.perp_original_names.clear()
+        for key, val in (perp_asset_map or {}).items():
+            if len(val) >= 6 and val[5]:
+                # 대문자 키 → 원본 이름
+                self.perp_original_names[key.upper()] = val[5]
 
     def _event_key(self, kind: str, key: str) -> str:
         return f"{kind}|{str(key).upper().strip()}"
@@ -861,30 +875,38 @@ class HLWSClientRaw(BaseWSClient):
         return self.get_price(symbol)
 
     # -------------------- [ADDED] Orderbook 기능 --------------------
+    def _get_original_coin_name(self, coin_upper: str) -> str:
+        """대문자 coin명 → 원본 coin명 (case-sensitive 대응)"""
+        return self.perp_original_names.get(coin_upper, coin_upper)
+
     def _normalize_symbol_key(self, symbol: str) -> str:
         """
-        심볼을 내부 캐시 키로 정규화.
+        심볼을 내부 캐시 키로 정규화 (원본 케이스 유지).
         - 'BASE/QUOTE' → 'BASE/QUOTE' (대문자)
-        - 'dex:COIN' → 'dex:COIN' (dex 소문자, coin 대문자)
-        - 'BTC' → 'BTC' (대문자)
+        - 'dex:COIN' → 'dex:coin' (dex 소문자, coin 원본)
+        - 'BTC' → 'BTC' (원본, kPEPE → kPEPE)
         """
         s = str(symbol).strip()
         if "/" in s:
             return s.upper()
         if ":" in s:
             parts = s.split(":", 1)
-            return f"{parts[0].lower()}:{parts[1].upper()}"
-        return s.upper()
+            coin_upper = parts[1].upper()
+            original_coin = self._get_original_coin_name(coin_upper)
+            return f"{parts[0].lower()}:{original_coin}"
+        # 일반 Perp: 원본 이름 사용
+        s_upper = s.upper()
+        return self._get_original_coin_name(s_upper)
 
     def _resolve_coin_for_orderbook(self, symbol: str) -> str:
         """
-        심볼 → WS 구독에 사용할 coin 키 반환.
+        심볼 → WS 구독에 사용할 coin 키 반환 (원본 케이스 유지).
         - Spot 'BASE/QUOTE' → '@{pairIdx}'
-        - Perp 'dex:COIN' (예: 'hyna:BTC', 'HYNA:BTC') → 'hyna:BTC' (dex 소문자, coin 대문자)
-        - Perp 'BTC' → 'BTC'
+        - Perp 'dex:COIN' → 'dex:coin' (dex 소문자, coin 원본)
+        - Perp 'BTC' → 원본 (kPEPE 등)
         """
         s = str(symbol).strip()
-        
+
         # 1) Spot 페어 'BASE/QUOTE' → '@{pairIdx}'
         if "/" in s:
             s_upper = s.upper()
@@ -894,16 +916,18 @@ class HLWSClientRaw(BaseWSClient):
                     return f"@{pair_idx}"
             # 매핑 실패 → 그대로 반환(서버에서 에러 반환됨)
             return s_upper
-        
-        # 2) Perp 'dex:COIN' 형태 (예: 'hyna:BTC', 'HYNA:BTC') → 'dex:COIN' (dex 소문자, coin 대문자)
+
+        # 2) Perp 'dex:COIN' 형태 → 'dex:coin' (원본 케이스)
         if ":" in s:
             parts = s.split(":", 1)
-            dex_part = parts[0].lower()   # dex는 소문자
-            coin_part = parts[1].upper()  # coin은 대문자
-            return f"{dex_part}:{coin_part}"
-        
-        # 3) 일반 Perp 'BTC' → 'BTC'
-        return s.upper()
+            dex_part = parts[0].lower()
+            coin_upper = parts[1].upper()
+            original_coin = self._get_original_coin_name(coin_upper)
+            return f"{dex_part}:{original_coin}"
+
+        # 3) 일반 Perp → 원본 이름
+        s_upper = s.upper()
+        return self._get_original_coin_name(s_upper)
 
     async def subscribe_orderbook(self, symbol: str) -> None:
         """
@@ -925,6 +949,7 @@ class HLWSClientRaw(BaseWSClient):
             # 첫 구독자일 때만 실제 구독 메시지 전송 (lock 유지)
             if current_count == 0:
                 sub = {"type": "l2Book", "coin": coin, "nSigFigs": None}
+                print(sub)
                 await self._send_subscribe(sub)
 
     async def unsubscribe_orderbook(self, symbol: str) -> bool:
@@ -1024,14 +1049,14 @@ class HLWSClientRaw(BaseWSClient):
             pair_name = self.spot_asset_index_to_pair.get(pair_idx)
             if not pair_name:
                 return
-            norm_key = pair_name.upper()
+            norm_key = pair_name #.upper()
         elif ":" in coin_raw:
             # Perp with dex: 'hyna:BTC' → 'hyna:BTC' (dex 소문자, coin 대문자)
             parts = coin_raw.split(":", 1)
-            norm_key = f"{parts[0].lower()}:{parts[1].upper()}"
+            norm_key = f"{parts[0].lower()}:{parts[1]}" #.upper()}"
         else:
             # 일반 Perp: 'BTC' → 'BTC'
-            norm_key = coin_raw.upper()
+            norm_key = coin_raw #.upper()
 
         # levels 파싱: [[{px, sz, n}, ...], [{px, sz, n}, ...]]
         def parse_level(lvl_list: List[Dict[str, Any]]) -> List[List]:
@@ -1048,7 +1073,7 @@ class HLWSClientRaw(BaseWSClient):
 
         bids = parse_level(levels[0])
         asks = parse_level(levels[1])
-
+        
         self._orderbooks[norm_key] = {
             "bids": bids,
             "asks": asks,
