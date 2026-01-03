@@ -285,7 +285,7 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         except Exception as e:
             return {"status": "error", "message": str(e)}
     
-    async def get_mark_price(self, symbol):
+    async def get_mark_price(self, symbol, *, ws_wait_timeout: float = 0.5):
         # WS에서 조회
         if self._ws_client:
             m_info = self.market_info.get(symbol)
@@ -296,8 +296,21 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
                 price = self._ws_client.get_mark_price(symbol)
             if price is not None:
                 return price
-            # WS에 아직 데이터가 없으면 REST fallback
-        print("LighterExchange.get_mark_price: using REST fallback")
+
+            # WS에 데이터가 없으면 잠시 대기 후 재시도
+            if ws_wait_timeout > 0:
+                try:
+                    ready = await self._ws_client.wait_price_ready(symbol, timeout=ws_wait_timeout)
+                    if ready:
+                        if is_spot:
+                            price = self._ws_client.get_spot_price(symbol)
+                        else:
+                            price = self._ws_client.get_mark_price(symbol)
+                        if price is not None:
+                            return price
+                except Exception as e:
+                    print(f"[lighter] wait_price_ready failed: {e}")
+        print("[lighter] get_mark_price: using REST fallback")
         # [ORIGINAL] REST API 호출
         m_info = self.market_info[symbol]
         market_id = m_info["market_id"]
@@ -417,7 +430,7 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
             "size": size
         }
         
-    async def get_position(self, symbol):
+    async def get_position(self, symbol, *, ws_wait_timeout: float = 0.5):
         # [MODIFIED] WS 모드면 캐시에서 조회
         if self._ws_client:
             # account_all 데이터가 수신되었는지 확인
@@ -433,8 +446,24 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
                     }
                 # WS에 해당 심볼 포지션 없음 = 포지션 없음
                 return None
-            # WS 데이터 미수신 상태면 REST fallback
-        print("LighterExchange.get_position: using REST fallback")
+
+            # WS 데이터 미수신 상태 (재연결 중)면 잠시 대기
+            if ws_wait_timeout > 0:
+                try:
+                    ready = await self._ws_client.wait_position_ready(timeout=ws_wait_timeout)
+                    if ready:
+                        pos = self._ws_client.get_position(symbol)
+                        if pos is not None:
+                            return {
+                                "entry_price": pos.get("entry_price"),
+                                "unrealized_pnl": pos.get("unrealized_pnl"),
+                                "side": pos.get("side"),
+                                "size": pos.get("size"),
+                            }
+                        return None
+                except Exception as e:
+                    print(f"[lighter] wait_position_ready failed: {e}")
+        print("[lighter] get_position: using REST fallback")
         # [ORIGINAL] REST API 호출
         l1_address = self.l1_address
         url = f"{self.url}/api/v1/account?by=l1_address&value={l1_address}"
@@ -456,36 +485,47 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
     async def close_position(self, symbol, position):
         return await super().close_position(symbol, position)
 
-    async def get_collateral(self, *, force_refresh: bool = False) -> dict:
+    async def get_collateral(self, *, force_refresh: bool = False, ws_wait_timeout: float = 0.5) -> dict:
         """
         담보/잔고 조회.
         - WS 모드: 캐시에서 조회 (실시간)
         - REST 모드: 쿨다운 내 재호출 시 캐시 반환
         - force_refresh=True면 강제로 REST API 호출
+        - ws_wait_timeout: WS 재연결/구독 중일 때 대기 시간 (초)
         """
         # [MODIFIED] WS 모드면 WS 캐시에서 조회
         if self._ws_client and not force_refresh:
             ws_coll = self._ws_client.get_collateral()
             ws_assets = self._ws_client.get_assets()
-            
+
+            # WS에 데이터가 없거나 재연결 중이면 잠시 대기
+            if not ws_coll and ws_wait_timeout > 0:
+                try:
+                    ready = await self._ws_client.wait_collateral_ready(timeout=ws_wait_timeout)
+                    if ready:
+                        ws_coll = self._ws_client.get_collateral()
+                        ws_assets = self._ws_client.get_assets()
+                except Exception as e:
+                    print(f"[lighter] wait_collateral_ready failed: {e}")
+
             # WS에 데이터가 있으면 사용
             if ws_coll:
                 # spot_balance 갱신
                 for symbol, asset_info in ws_assets.items():
                     self.spot_balance[symbol] = asset_info
-                
+
                 spot = {}
                 for symbol in STABLES:
                     if symbol in ws_assets:
                         spot[symbol] = ws_assets[symbol].get("total", 0)
-                
+
                 return {
                     "available_collateral": round(ws_coll.get("available_collateral", 0), 2),
                     "total_collateral": round(ws_coll.get("total_collateral", 0), 2),
                     "spot": spot,
                 }
-            # WS에 아직 데이터가 없으면 REST fallback
-        print("LighterExchange.get_collateral: using REST fallback")
+            # WS에 대기 후에도 데이터가 없으면 REST fallback
+        print("[lighter] get_collateral: using REST fallback")
         now = time.time()
 
         # 캐시 유효 → 바로 반환
