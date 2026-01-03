@@ -261,6 +261,44 @@ class BaseWSClient(ABC):
         await self._safe_close(old_ws)
         await self._reconnect_with_backoff()
 
+    async def _do_reconnect(self) -> bool:
+        """
+        단일 재연결 시도 (공통 로직).
+        Returns: 성공 시 True, 실패 시 False
+        """
+        try:
+            old_ws = self._ws
+            self._ws = None
+            await self._safe_close(old_ws)
+
+            # 기존 태스크 정리
+            if self._ping_task and not self._ping_task.done():
+                self._ping_task.cancel()
+            if self._recv_task and not self._recv_task.done():
+                self._recv_task.cancel()
+
+            self._ws = await asyncio.wait_for(
+                websockets.connect(
+                    self.WS_URL,
+                    ping_interval=None,
+                    ping_timeout=None,
+                    close_timeout=5,
+                ),
+                timeout=self.WS_CONNECT_TIMEOUT,
+            )
+            self._recv_task = asyncio.create_task(self._recv_loop())
+            if self.PING_INTERVAL is not None:
+                self._ping_task = asyncio.create_task(self._ping_loop())
+
+            # 재구독
+            await self._resubscribe()
+            return True
+        except Exception as e:
+            msg = f"[{self.__class__.__name__}] reconnect failed: {e}"
+            print(msg)
+            logger.error(msg)
+            return False
+
     async def _reconnect_with_backoff(self) -> None:
         """Exponential backoff으로 재연결"""
         if self._reconnecting:
@@ -275,37 +313,13 @@ class BaseWSClient(ABC):
                 logger.info(msg)
                 await asyncio.sleep(delay)
 
-                # 기존 태스크 정리
-                if self._ping_task and not self._ping_task.done():
-                    self._ping_task.cancel()
-                if self._recv_task and not self._recv_task.done():
-                    self._recv_task.cancel()
-
-                try:
-                    self._ws = await asyncio.wait_for(
-                        websockets.connect(
-                            self.WS_URL,
-                            ping_interval=None,
-                            ping_timeout=None,
-                            close_timeout=5,
-                        ),
-                        timeout=self.WS_CONNECT_TIMEOUT,
-                    )
-                    self._recv_task = asyncio.create_task(self._recv_loop())
-                    if self.PING_INTERVAL is not None:
-                        self._ping_task = asyncio.create_task(self._ping_loop())
-
-                    # 재구독
-                    await self._resubscribe()
+                if await self._do_reconnect():
                     msg = f"[{self.__class__.__name__}] reconnected"
                     print(msg)
                     logger.info(msg)
                     return
-                except Exception as e:
-                    msg = f"[{self.__class__.__name__}] reconnect failed: {e}"
-                    print(msg)
-                    logger.error(msg)
-                    delay = min(self.RECONNECT_MAX, delay * 2.0) + random.uniform(0, 0.5)
+
+                delay = min(self.RECONNECT_MAX, delay * 2.0) + random.uniform(0, 0.5)
         finally:
             self._reconnecting = False
 

@@ -3,6 +3,9 @@ Lighter get_collateral 무한루프 테스트
 REST fallback 발생 여부 확인용
 """
 import asyncio
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mpdex import create_exchange
 from keys.pk_lighter import LIGHTER_KEY
 

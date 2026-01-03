@@ -20,7 +20,6 @@ import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
-import websockets
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 
 from wrappers.base_ws_client import BaseWSClient, _json_dumps
@@ -32,7 +31,7 @@ WS_URL_MAINNET = "wss://mainnet.zklighter.elliot.ai/stream"
 WS_CONNECT_TIMEOUT = 10
 RECONNECT_MIN = 0.5
 RECONNECT_MAX = 8.0
-FORCE_RECONNECT_INTERVAL = 10  # 강제 재연결 주기 (초)
+FORCE_RECONNECT_INTERVAL = 60  # 강제 재연결 주기 (초)
 
 
 class LighterWSClient(BaseWSClient):
@@ -299,7 +298,7 @@ class LighterWSClient(BaseWSClient):
             pass
 
     async def _force_reconnect(self) -> None:
-        """강제 재연결 수행 (초기 연결과 동일하게 처리)"""
+        """강제 재연결 수행 (주기적 재연결용)"""
         if self._reconnecting:
             return
 
@@ -309,71 +308,9 @@ class LighterWSClient(BaseWSClient):
             self._reconnecting = True
 
             try:
-                old_ws = self._ws
-                self._ws = None
-                await self._safe_close(old_ws)
-
-                # 모든 캐시 초기화 (초기 상태로)
-                self._orders.clear()
-                self._orders_ready.clear()
-                self._positions.clear()
-                self._user_stats.clear()
-                self._assets.clear()
-
-                # 이벤트 초기화
-                self._market_stats_ready.clear()
-                self._user_stats_ready.clear()
-                self._account_all_ready.clear()
-
-                # Orderbook 초기화
-                for mid in list(self._orderbook_subs):
-                    self._orderbooks.pop(mid, None)
-                    self._orderbook_nonces.pop(mid, None)
-                    self._orderbook_asks_dict.pop(mid, None)
-                    self._orderbook_bids_dict.pop(mid, None)
-                    if mid in self._orderbook_events:
-                        self._orderbook_events[mid].clear()
-
-                # 기존 recv_task 정리
-                if self._recv_task and not self._recv_task.done():
-                    self._recv_task.cancel()
-
-                # 구독 상태 초기화
-                self._active_subs.clear()
-
-                self._ws = await asyncio.wait_for(
-                    websockets.connect(
-                        self.WS_URL,
-                        ping_interval=None,
-                        ping_timeout=None,
-                        close_timeout=5,
-                    ),
-                    timeout=self.WS_CONNECT_TIMEOUT,
-                )
-                print("[LighterWS] Reconnected (periodic)")
-                logger.info("[LighterWS] Reconnected (periodic)")
-
-                self._recv_task = asyncio.create_task(self._recv_loop())
-
-                # 재연결 시 새 auth token 발급
-                if self._auth_token_getter:
-                    try:
-                        self.auth_token = self._auth_token_getter()
-                    except Exception as e:
-                        print(f"[LighterWS] Failed to get new auth token: {e}")
-
-                # 초기 연결과 동일하게 subscribe() 호출
-                await self.subscribe()
-
-                # 오더북 재구독
-                for mid in list(self._orderbook_subs):
-                    channel = f"order_book/{mid}"
-                    await self._send_subscribe(channel)
-                # 데이터는 백그라운드에서 수신됨 (대기하지 않음)
-            except Exception as e:
-                msg = f"[LighterWS] Reconnect failed: {e}"
-                print(msg)
-                logger.error(msg)
+                if await self._do_reconnect():
+                    print("[LighterWS] Reconnected (periodic)")
+                    logger.info("[LighterWS] Reconnected (periodic)")
             finally:
                 self._reconnecting = False
 

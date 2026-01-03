@@ -495,20 +495,16 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
         """
         # [MODIFIED] WS 모드면 WS 캐시에서 조회
         if self._ws_client and not force_refresh:
-            print("[lighter] get_collateral: using WS data")
             ws_coll = self._ws_client.get_collateral()
             ws_assets = self._ws_client.get_assets()
 
             # WS에 데이터가 없거나 재연결 중이면 잠시 대기
             if not ws_coll and ws_wait_timeout > 0:
-                print("[lighter] get_collateral: waiting for WS data...")
                 try:
                     ready = await self._ws_client.wait_collateral_ready(timeout=ws_wait_timeout)
-                    print(f"[lighter] get_collateral: wait_collateral_ready returned {ready}")
                     if ready:
                         ws_coll = self._ws_client.get_collateral()
                         ws_assets = self._ws_client.get_assets()
-                        print(f"[lighter] get_collateral: received WS collateral: {ws_coll} ws_assets {ws_assets}")
                 except Exception as e:
                     print(f"[lighter] wait_collateral_ready failed: {e}")
 
