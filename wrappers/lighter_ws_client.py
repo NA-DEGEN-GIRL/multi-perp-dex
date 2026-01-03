@@ -834,6 +834,14 @@ class LighterWSClient(BaseWSClient):
                 pass
         return result
 
+    def _is_order_open(self, order: Dict[str, Any]) -> bool:
+        """주문이 아직 열려있는지 확인"""
+        if not order:
+            return False
+        status = str(order.get("status", "")).lower()
+        # open/pending 상태만 true
+        return status in ("open", "pending", "partially_filled", "")
+
     def get_open_orders(self, symbol: str) -> List[Dict[str, Any]]:
         """특정 심볼의 오픈 오더 조회 (캐시)"""
         mid = self._symbol_to_market_id.get(symbol.upper())
@@ -841,7 +849,7 @@ class LighterWSClient(BaseWSClient):
             return []
 
         orders = self._orders.get(mid, [])
-        return [self._normalize_order(o, symbol) for o in orders if o]
+        return [self._normalize_order(o, symbol) for o in orders if self._is_order_open(o)]
 
     def get_all_open_orders(self) -> Dict[str, List[Dict[str, Any]]]:
         """모든 심볼의 오픈 오더 반환"""
@@ -849,7 +857,7 @@ class LighterWSClient(BaseWSClient):
         for mid, orders in self._orders.items():
             symbol = self._market_id_to_symbol.get(mid)
             if symbol and orders:
-                normalized = [self._normalize_order(o, symbol) for o in orders if o]
+                normalized = [self._normalize_order(o, symbol) for o in orders if self._is_order_open(o)]
                 if normalized:
                     result[symbol] = normalized
         return result

@@ -23,17 +23,22 @@ test_bool = {
 
 async def main():
     lighter = await create_exchange('lighter',LIGHTER_KEY)
-    #res = await lighter.get_open_orders('BTC')
-    #print(res)
+    
+    while True:
+        res = await lighter.get_open_orders('BTC')
+        print(res)
+        await asyncio.sleep(0.1)
 
-    #res = await lighter.cancel_orders('BTC', res)
-    #print(res)
+    for od in res:
+
+        res = await lighter.cancel_orders('BTC', od)
+        print(res)
 
    
     #res = await lighter.create_order(symbol, 'buy', 0.0003)
     #print(res)
     #await asyncio.sleep(0.1)
-    while True:
+    while False:
         res = await lighter.get_orderbook(symbol)
         #print(len(res.get('bids', [])), len(res.get('asks', [])))
         print(res.get('bids', [])[:3], res.get('asks', [])[:3])
