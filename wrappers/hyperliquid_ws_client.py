@@ -1061,7 +1061,7 @@ class HLWSClientRaw(BaseWSClient):
             ev.set()
 
 class HLWSClientPool:
-    USER_SUB_LIMIT = 7  # [ADDED] 유저별 구독 최대치
+    USER_SUB_LIMIT = 1  # comment: 한 WS 소켓당 허용할 유저 스트림 수 제한
     """
     (ws_url, address) 단위로 HLWSClientRaw를 1개만 생성/공유하는 풀.
     - 동일 주소에서 다중 DEX allMids는 하나의 커넥션에서 추가 구독한다.
