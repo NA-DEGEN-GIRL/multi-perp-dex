@@ -186,15 +186,19 @@ class LighterWSClient(BaseWSClient):
     async def _send_subscribe(self, channel: str) -> None:
         """단일 채널 구독 (중복 방지)"""
         if channel in self._active_subs:
+            print(f"[LighterWS] Subscribe skip (already subscribed): {channel}")
             return
         async with self._send_lock:
             if channel in self._active_subs:
+                print(f"[LighterWS] Subscribe skip (already subscribed, in lock): {channel}")
                 return
             if not self._ws or not self._running:
+                print(f"[LighterWS] Subscribe skip (not connected): {channel}")
                 return
             msg = {"type": "subscribe", "channel": channel}
             if self.auth_token and ("orders" in channel or "tx" in channel):
                 msg["auth"] = self.auth_token
+            print(f"[LighterWS] Subscribe: {channel}")
             await self._ws.send(_json_dumps(msg))
             self._active_subs.add(channel)
 
@@ -223,19 +227,23 @@ class LighterWSClient(BaseWSClient):
         """Orderbook 채널 구독 해제"""
         mid = self._symbol_to_market_id.get(symbol.upper())
         if mid is None:
+            print(f"[LighterWS] Unsubscribe orderbook skip (unknown symbol): {symbol}")
             return False
 
         if mid not in self._orderbook_subs:
+            print(f"[LighterWS] Unsubscribe orderbook skip (not subscribed): {symbol}")
             return True
 
         channel = f"order_book/{mid}"
         if channel not in self._active_subs:
             self._orderbook_subs.discard(mid)
+            print(f"[LighterWS] Unsubscribe orderbook skip (not in active_subs): {symbol}")
             return True
 
         async with self._send_lock:
             msg = {"type": "unsubscribe", "channel": channel}
             if self._ws and self._running:
+                print(f"[LighterWS] Unsubscribe: {channel}")
                 await self._ws.send(_json_dumps(msg))
             self._active_subs.discard(channel)
             self._orderbook_subs.discard(mid)

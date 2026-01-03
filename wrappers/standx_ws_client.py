@@ -238,7 +238,9 @@ class StandXWSClient(BaseWSClient):
     async def subscribe_price(self, symbol: str) -> None:
         """Subscribe to price channel for symbol"""
         if symbol in self._price_subs:
+            print(f"[StandXWS] Subscribe skip (already subscribed): price/{symbol}")
             return
+        print(f"[StandXWS] Subscribe: price/{symbol}")
         await self._send_msg({"subscribe": {"channel": "price", "symbol": symbol}})
         self._price_subs.add(symbol)
         if symbol not in self._price_events:
@@ -247,14 +249,18 @@ class StandXWSClient(BaseWSClient):
     async def unsubscribe_price(self, symbol: str) -> None:
         """Unsubscribe from price channel"""
         if symbol not in self._price_subs:
+            print(f"[StandXWS] Unsubscribe skip (not subscribed): price/{symbol}")
             return
+        print(f"[StandXWS] Unsubscribe: price/{symbol}")
         await self._send_msg({"unsubscribe": {"channel": "price", "symbol": symbol}})
         self._price_subs.discard(symbol)
 
     async def subscribe_orderbook(self, symbol: str) -> None:
         """Subscribe to orderbook (depth_book) channel for symbol"""
         if symbol in self._orderbook_subs:
+            print(f"[StandXWS] Subscribe skip (already subscribed): orderbook/{symbol}")
             return
+        print(f"[StandXWS] Subscribe: orderbook/{symbol}")
         await self._send_msg({"subscribe": {"channel": "depth_book", "symbol": symbol}})
         self._orderbook_subs.add(symbol)
         if symbol not in self._orderbook_events:
@@ -263,7 +269,9 @@ class StandXWSClient(BaseWSClient):
     async def unsubscribe_orderbook(self, symbol: str) -> None:
         """Unsubscribe from orderbook (depth_book) channel"""
         if symbol not in self._orderbook_subs:
+            print(f"[StandXWS] Unsubscribe skip (not subscribed): orderbook/{symbol}")
             return
+        print(f"[StandXWS] Unsubscribe: orderbook/{symbol}")
         await self._send_msg({"unsubscribe": {"channel": "depth_book", "symbol": symbol}})
         self._orderbook_subs.discard(symbol)
 
@@ -273,14 +281,18 @@ class StandXWSClient(BaseWSClient):
     async def subscribe_position(self) -> None:
         """Subscribe to position channel (requires auth)"""
         if "position" in self._user_subs:
+            print("[StandXWS] Subscribe skip (already subscribed): position")
             return
+        print("[StandXWS] Subscribe: position")
         await self._send_msg({"subscribe": {"channel": "position"}})
         self._user_subs.add("position")
 
     async def subscribe_balance(self) -> None:
         """Subscribe to balance channel (requires auth)"""
         if "balance" in self._user_subs:
+            print("[StandXWS] Subscribe skip (already subscribed): balance")
             return
+        print("[StandXWS] Subscribe: balance")
         await self._send_msg({"subscribe": {"channel": "balance"}})
         self._user_subs.add("balance")
 

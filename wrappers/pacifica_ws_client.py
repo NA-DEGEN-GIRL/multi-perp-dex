@@ -352,7 +352,9 @@ class PacificaWSClient(BaseWSClient):
     async def subscribe_prices(self) -> None:
         """Subscribe to prices channel (all symbols)"""
         if self._prices_subscribed:
+            print("[PacificaWS] Subscribe skip (already subscribed): prices")
             return
+        print("[PacificaWS] Subscribe: prices")
         await self._send({
             "method": "subscribe",
             "params": {"source": "prices"}
@@ -362,7 +364,9 @@ class PacificaWSClient(BaseWSClient):
     async def unsubscribe_prices(self) -> None:
         """Unsubscribe from prices channel"""
         if not self._prices_subscribed:
+            print("[PacificaWS] Unsubscribe skip (not subscribed): prices")
             return
+        print("[PacificaWS] Unsubscribe: prices")
         await self._send({
             "method": "unsubscribe",
             "params": {"source": "prices"}
@@ -376,7 +380,9 @@ class PacificaWSClient(BaseWSClient):
         """
         symbol = symbol.upper()
         if symbol in self._orderbook_subs:
+            print(f"[PacificaWS] Subscribe skip (already subscribed): orderbook/{symbol}")
             return
+        print(f"[PacificaWS] Subscribe: orderbook/{symbol}")
         await self._send({
             "method": "subscribe",
             "params": {
@@ -393,7 +399,9 @@ class PacificaWSClient(BaseWSClient):
         """Unsubscribe from orderbook channel"""
         symbol = symbol.upper()
         if symbol not in self._orderbook_subs:
+            print(f"[PacificaWS] Unsubscribe skip (not subscribed): orderbook/{symbol}")
             return True
+        print(f"[PacificaWS] Unsubscribe: orderbook/{symbol}")
         await self._send({
             "method": "unsubscribe",
             "params": {
@@ -410,7 +418,9 @@ class PacificaWSClient(BaseWSClient):
     async def subscribe_account_info(self, account: str) -> None:
         """Subscribe to account_info channel (requires auth)"""
         if self._account_info_subscribed:
+            print("[PacificaWS] Subscribe skip (already subscribed): account_info")
             return
+        print("[PacificaWS] Subscribe: account_info")
         await self._send({
             "method": "subscribe",
             "params": {
@@ -423,7 +433,9 @@ class PacificaWSClient(BaseWSClient):
     async def subscribe_account_positions(self, account: str) -> None:
         """Subscribe to account_positions channel (requires auth)"""
         if self._account_positions_subscribed:
+            print("[PacificaWS] Subscribe skip (already subscribed): account_positions")
             return
+        print("[PacificaWS] Subscribe: account_positions")
         await self._send({
             "method": "subscribe",
             "params": {
@@ -436,7 +448,9 @@ class PacificaWSClient(BaseWSClient):
     async def subscribe_account_orders(self, account: str) -> None:
         """Subscribe to account_orders channel (requires auth)"""
         if self._account_orders_subscribed:
+            print("[PacificaWS] Subscribe skip (already subscribed): account_orders")
             return
+        print("[PacificaWS] Subscribe: account_orders")
         await self._send({
             "method": "subscribe",
             "params": {
