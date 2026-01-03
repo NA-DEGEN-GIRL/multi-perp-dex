@@ -6,6 +6,7 @@ Tests non-order related functionality for all WS-based exchanges:
 - Hyperliquid
 - Pacifica
 - StandX
+- Backpack
 
 Runs in infinite loop to verify real-time data updates.
 """
@@ -43,6 +44,12 @@ EXCHANGES = {
         "key_name": "STANDX_KEY",
         "coin": "BTC",
         "skip": ["collateral", "position"],  # REST API only
+    },
+    "backpack": {
+        "key_module": "keys.pk_backpack",
+        "key_name": "BACKPACK_KEY",
+        "coin": "BTC",
+        "skip": ["collateral", "position"],  # WS is public streams only
     },
 }
 

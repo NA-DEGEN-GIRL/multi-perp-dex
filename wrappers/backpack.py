@@ -5,6 +5,9 @@ import nacl.signing
 import aiohttp
 from multi_perp_dex import MultiPerpDex, MultiPerpDexMixin
 from decimal import Decimal, ROUND_DOWN
+from typing import Optional, Dict, Any
+
+from wrappers.backpack_ws_client import WS_POOL, BackpackWSClient
 
 class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
     def __init__(self,api_key,secret_key):
@@ -14,9 +17,11 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
         self.PRIVATE_KEY = secret_key #SECRET_TRADING
         self.BASE_URL = "https://api.backpack.exchange/api/v1"
         self.COLLATERAL_SYMBOL = 'USDC'
+        self._ws_client: Optional[BackpackWSClient] = None
 
     async def init(self):
         await self.update_avaiable_symbols()
+        self._ws_client = await WS_POOL.acquire()
         return self
 
     async def update_avaiable_symbols(self):
@@ -189,7 +194,27 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
             for o in orders
         ]
 
-    async def get_mark_price(self,symbol):
+    async def get_mark_price(self, symbol):
+        """Get mark price via WS (preferred) or REST fallback"""
+        # Try WS first
+        if self._ws_client:
+            price = self._ws_client.get_mark_price(symbol)
+            if price is not None:
+                return price
+
+            # Subscribe and wait for data
+            await self._ws_client.subscribe_mark_price(symbol)
+            ready = await self._ws_client.wait_price_ready(symbol, timeout=3.0)
+            if ready:
+                price = self._ws_client.get_mark_price(symbol)
+                if price is not None:
+                    return price
+
+        # Fallback to REST
+        return await self.get_mark_price_rest(symbol)
+
+    async def get_mark_price_rest(self, symbol):
+        """Get mark price via REST API"""
         async with aiohttp.ClientSession() as session:
             res = await self._get_mark_prices(session, symbol)
             if isinstance(res, list):
@@ -345,6 +370,33 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
 
     async def close_position(self, symbol, position):
         return await super().close_position(symbol, position)
+
+    async def get_orderbook(self, symbol) -> Optional[Dict[str, Any]]:
+        """Get orderbook via WS"""
+        if not self._ws_client:
+            self._ws_client = await WS_POOL.acquire()
+
+        # Check if already have data
+        orderbook = self._ws_client.get_orderbook(symbol)
+        if orderbook is not None:
+            return orderbook
+
+        # Subscribe and wait for data
+        await self._ws_client.subscribe_orderbook(symbol)
+        ready = await self._ws_client.wait_orderbook_ready(symbol, timeout=3.0)
+        if ready:
+            return self._ws_client.get_orderbook(symbol)
+        return None
+
+    async def unsubscribe_orderbook(self, symbol) -> None:
+        """Unsubscribe from orderbook WS"""
+        if self._ws_client:
+            await self._ws_client.unsubscribe_orderbook(symbol)
+
+    async def close(self):
+        """Close the exchange connection"""
+        # WS pool manages lifecycle, we just release our reference
+        self._ws_client = None
     
     async def cancel_orders(self, symbol, open_orders=None):
         if open_orders is not None and not isinstance(open_orders, list):

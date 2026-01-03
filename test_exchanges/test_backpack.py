@@ -8,11 +8,22 @@ from keys.pk_backpack import BACKPACK_KEY
 
 coin = 'BTC'
 symbol = symbol_create('backpack',coin,is_spot=False)
-
+symbol_spot = 'BTC_USDC'
 async def main():
     backpack = await create_exchange('backpack',BACKPACK_KEY)
     #print(backpack)
 
+
+    price = await backpack.get_mark_price(symbol)
+    print(price)
+    price = await backpack.get_mark_price(symbol_spot)
+    print(price)
+
+    res = await backpack.get_orderbook(symbol)
+    print(len(res.get('bids', [])), res.get('bids', [])[:10])
+    print(len(res.get('asks', [])), res.get('asks', [])[:10])
+
+    return
     coll = await backpack.get_collateral()
     print(coll)
 
@@ -33,8 +44,7 @@ async def main():
     #available_symbols = await backpack.get_available_symbols()
     #print(available_symbols)
     #symbol = 
-    price = await backpack.get_mark_price(symbol)
-    print(price)
+    
 
     spot_amount = await backpack.get_spot_balance("BTC")
     print(spot_amount)
