@@ -280,6 +280,7 @@ class BaseWSClient(ABC):
                 print(msg)
                 logger.info(msg)
                 await asyncio.sleep(delay)
+                print(f"[{self.__class__.__name__}] sleep done, attempting connect to {self.WS_URL}")
 
                 # 기존 태스크 정리
                 if self._ping_task and not self._ping_task.done():
@@ -288,6 +289,7 @@ class BaseWSClient(ABC):
                     self._recv_task.cancel()
 
                 try:
+                    print(f"[{self.__class__.__name__}] websockets.connect starting...")
                     self._ws = await asyncio.wait_for(
                         websockets.connect(
                             self.WS_URL,
@@ -297,11 +299,13 @@ class BaseWSClient(ABC):
                         ),
                         timeout=self.WS_CONNECT_TIMEOUT,
                     )
+                    print(f"[{self.__class__.__name__}] websockets.connect done, starting tasks...")
                     self._recv_task = asyncio.create_task(self._recv_loop())
                     if self.PING_INTERVAL is not None:
                         self._ping_task = asyncio.create_task(self._ping_loop())
 
                     # 재구독
+                    print(f"[{self.__class__.__name__}] calling _resubscribe...")
                     await self._resubscribe()
                     msg = f"[{self.__class__.__name__}] reconnected"
                     print(msg)
@@ -311,6 +315,8 @@ class BaseWSClient(ABC):
                     msg = f"[{self.__class__.__name__}] reconnect failed: {e}"
                     print(msg)
                     logger.error(msg)
+                    import traceback
+                    traceback.print_exc()
                     delay = min(self.RECONNECT_MAX, delay * 2.0) + random.uniform(0, 0.5)
         finally:
             self._reconnecting = False
