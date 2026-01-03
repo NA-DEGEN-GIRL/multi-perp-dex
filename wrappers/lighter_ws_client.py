@@ -30,8 +30,6 @@ logger = logging.getLogger(__name__)
 # 상수
 WS_URL_MAINNET = "wss://mainnet.zklighter.elliot.ai/stream"
 WS_CONNECT_TIMEOUT = 10
-WS_READ_TIMEOUT = 30
-PING_INTERVAL = 30
 RECONNECT_MIN = 0.5
 RECONNECT_MAX = 8.0
 FORCE_RECONNECT_INTERVAL = 60  # 강제 재연결 주기 (초)
@@ -49,6 +47,7 @@ class LighterWSClient(BaseWSClient):
     WS_URL = WS_URL_MAINNET
     WS_CONNECT_TIMEOUT = WS_CONNECT_TIMEOUT
     PING_INTERVAL = None  # 별도 ping 대신 force_reconnect 사용
+    RECV_TIMEOUT = 60.0  # 60초간 메시지 없으면 재연결
     RECONNECT_MIN = RECONNECT_MIN
     RECONNECT_MAX = RECONNECT_MAX
 
@@ -237,7 +236,7 @@ class LighterWSClient(BaseWSClient):
                 await asyncio.sleep(0.1)
                 continue
             try:
-                raw = await asyncio.wait_for(self._ws.recv(), timeout=WS_READ_TIMEOUT)
+                raw = await asyncio.wait_for(self._ws.recv(), timeout=self.RECV_TIMEOUT)
             except asyncio.TimeoutError:
                 logger.warning("[LighterWS] Recv timeout, reconnecting...")
                 await self._handle_disconnect()

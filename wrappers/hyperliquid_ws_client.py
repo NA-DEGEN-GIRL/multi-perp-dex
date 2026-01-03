@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 HYPERLIQUID_WS_URL = "wss://api.hyperliquid.xyz/ws"  # 메인넷 WS
 WS_CONNECT_TIMEOUT = 15
 WS_READ_TIMEOUT = 60
-PING_INTERVAL = 20
+PING_INTERVAL = None  # recv timeout만 사용
 RECONNECT_MIN = 1.0
 RECONNECT_MAX = 8.0
 
@@ -65,7 +65,8 @@ class HLWSClientRaw(BaseWSClient):
     """
 
     WS_URL = HYPERLIQUID_WS_URL
-    PING_INTERVAL = PING_INTERVAL
+    PING_INTERVAL = None  # recv timeout만 사용
+    RECV_TIMEOUT = WS_READ_TIMEOUT  # 60초
     RECONNECT_MIN = RECONNECT_MIN
     RECONNECT_MAX = RECONNECT_MAX
 
@@ -569,23 +570,6 @@ class HLWSClientRaw(BaseWSClient):
                 logger.info(f"RESUB(orderbook) -> {_json_dumps({'method':'subscribe','subscription':sub})}")
 
     # ---------------------- 루프/콜백 ----------------------
-
-    async def _ping_loop(self) -> None:
-        """
-        WebSocket 프레임 ping이 아니라, 서버 스펙에 맞춘 JSON ping 전송.
-        """
-        try:
-            while not self._stop.is_set():
-                await asyncio.sleep(PING_INTERVAL)
-                if not self._ws:
-                    continue
-                try:
-                    await self._ws.send(_json_dumps({"method": "ping"}))
-                    logger.debug("ping sent (json)")
-                except Exception as e:
-                    logger.warning(f"ping error: {e}")
-        except asyncio.CancelledError:
-            return
 
     async def _recv_loop(self) -> None:
         """메시지 수신 루프 (BaseWSClient override)"""

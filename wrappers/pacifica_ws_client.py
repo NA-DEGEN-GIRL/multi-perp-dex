@@ -35,7 +35,8 @@ class PacificaWSClient(BaseWSClient):
     """
 
     WS_URL = PACIFICA_WS_URL
-    PING_INTERVAL = 50.0  # seconds (server timeout at 60s)
+    PING_INTERVAL = None  # recv timeout만 사용
+    RECV_TIMEOUT = 60.0  # 60초간 메시지 없으면 재연결
     RECONNECT_MIN = 1.0
     RECONNECT_MAX = 8.0
 
