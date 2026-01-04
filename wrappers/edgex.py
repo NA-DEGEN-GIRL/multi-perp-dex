@@ -308,18 +308,19 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
         tick_size = Decimal(contract_info['tickSize'])
         step_size = contract_info['stepSize']
 
-        value = price * Decimal(amount)
-        value = self.round_step_size(value, '0.0001')
-        size = Decimal(amount)
+        size = Decimal(str(amount))
         size = self.round_step_size(size, step_size)
+        price_dec = Decimal(str(price)) if price else Decimal(0)
 
         client_order_id = str(uuid.uuid4())
 
         if is_spot:
             symbol_id = contract_info['symbolId']
-            
+            value = price_dec * size
+            value = self.round_step_size(value, '0.0001')
+
             body = {
-                "price": str(price if order_type.upper() != 'MARKET' else 0),
+                "price": str(price_dec if order_type.upper() != 'MARKET' else 0),
                 "size": str(size),
                 "type": order_type.upper(),
                 "timeInForce": time_in_force,
@@ -353,10 +354,12 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
                     price = oracle_price * Decimal("0.9")
                     price = price.quantize(tick_size, rounding=ROUND_HALF_UP)
             else:
-                price = Decimal(price).quantize(tick_size, rounding=ROUND_HALF_UP)
+                price = price_dec.quantize(tick_size, rounding=ROUND_HALF_UP)
 
-            
-            
+            # Calculate value after price is determined
+            value = price * size
+            value = self.round_step_size(value, '0.0001')
+
             is_buy = side.upper() == 'BUY'
 
             

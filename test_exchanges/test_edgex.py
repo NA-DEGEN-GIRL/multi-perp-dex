@@ -20,6 +20,10 @@ async def main():
     coll = await edgex.get_collateral()
     print(coll)
 
+    res = await edgex.create_order(symbol, 'buy', 0.5)
+    print(res)
+    return
+
     while True:
         price = await edgex.get_mark_price(symbol)
         print(price)
@@ -57,8 +61,7 @@ async def main():
     #print(res)
 
     # market buy
-    res = await edgex.create_order(symbol, 'buy', 0.002)
-    print(res)
+    
         
     # market sell
     res = await edgex.create_order(symbol, 'sell', 0.001)
