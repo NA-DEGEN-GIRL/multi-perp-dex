@@ -7,6 +7,7 @@ Tests non-order related functionality for all WS-based exchanges:
 - Pacifica
 - StandX
 - Backpack
+- EdgeX
 
 Runs in infinite loop to verify real-time data updates.
 """
@@ -50,6 +51,12 @@ EXCHANGES = {
         "key_name": "BACKPACK_KEY",
         "coin": "BTC",
         "skip": ["collateral"],  # collateral is REST only, position/orders now via WS
+    },
+    "edgex": {
+        "key_module": "keys.pk_edgex",
+        "key_name": "EDGEX_KEY",
+        "coin": "BTC",
+        "skip": ["collateral"],  # collateral is REST only (no available balance in WS)
     },
 }
 

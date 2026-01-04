@@ -7,27 +7,37 @@ from keys.pk_edgex import EDGEX_KEY
 
 # test done
 
-coin = 'ETH/USDC'
-symbol = symbol_create('edgex',coin,is_spot=True)
+coin = 'SOL'
+symbol = symbol_create('edgex',coin,is_spot=False)
 
 async def main():
     edgex = await create_exchange('edgex', EDGEX_KEY)
 
-    available_symbols = await edgex.get_available_symbols()
-    print(available_symbols)
+    #available_symbols = await edgex.get_available_symbols()
+    #print(available_symbols)
     #return
 
-    price = await edgex.get_mark_price(symbol)
-    print(price)
-
-    res = await edgex.create_order(symbol, 'buy', 0.02, price=3000)
-    print(res)
-    #return
-
-    
-    
     coll = await edgex.get_collateral()
     print(coll)
+
+    while True:
+        price = await edgex.get_mark_price(symbol)
+        print(price)
+
+        pos = await edgex.get_position(symbol)
+        if pos:
+            print(pos.get('entry_price',0), pos.get('unrealized_pnl',0), pos.get('side',None), pos.get('size',0))
+
+        o = await edgex.get_open_orders(symbol)
+        if o:
+            print(o)
+
+        book = await edgex.get_orderbook(symbol,5)
+        print(book)
+        await asyncio.sleep(0.1)
+
+    await edgex.close()
+    return
     
     '''
     # limit sell

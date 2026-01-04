@@ -8,25 +8,107 @@ from starkware.crypto.signature.fast_pedersen_hash import pedersen_hash
 from starkware.crypto.signature.signature import sign, ec_mult, verify, ALPHA, FIELD_PRIME, EC_GEN
 from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN
 import asyncio
+from typing import Optional, Dict, Any
+
+from wrappers.edgex_ws_client import EdgeXPublicWSClient, EdgeXPrivateWSClient
 
 class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
-    def __init__(self,account_id,private_key):
+
+    ws_supported = {
+        "get_mark_price": True,
+        "get_orderbook": True,
+        "get_position": True,
+        "get_collateral": False,  # WS doesn't provide available balance
+        "get_open_orders": True,
+        "create_order": False,
+        "cancel_orders": False,
+        "close_position": False,
+    }
+
+    def __init__(self, account_id, private_key, *, prefer_ws: bool = True):
         super().__init__()
         self.base_url = 'https://pro.edgex.exchange'
         self.base_url_spot = 'https://spot.edgex.exchange'
         self.account_id = account_id
         self.private_key_hex = private_key.replace("0x", "")
-                
+
         self.K_MODULUS = int("0800000000000010ffffffffffffffffb781126dcae7b2321e66a241adc64d2f", 16)
         self.market_info = {}  # symbol → metadata
         self.usdt_coin_id = '1000'
+
+        # WS 설정
+        self.prefer_ws = prefer_ws
+        self._public_ws: Optional[EdgeXPublicWSClient] = None
+        self._private_ws: Optional[EdgeXPrivateWSClient] = None
+        self._contract_id_map: Dict[str, str] = {}  # symbol -> contractId
     
     async def init(self):
         await self.get_meta_data()
         await self.get_meta_data(is_spot=True)
         self.update_available_symbols()
-        
+        self._build_contract_id_map()
+
+        # WS 클라이언트 초기화 (prefer_ws일 경우)
+        if self.prefer_ws:
+            await self._init_ws_clients()
+
         return self
+
+    def _build_contract_id_map(self):
+        """Build symbol -> contractId mapping"""
+        for symbol, info in self.market_info.items():
+            if 'contractId' in info:
+                self._contract_id_map[symbol] = info['contractId']
+
+    async def _init_ws_clients(self):
+        """Initialize WebSocket clients"""
+        try:
+            # Public WS
+            self._public_ws = EdgeXPublicWSClient()
+            connected = await self._public_ws.connect()
+            if connected:
+                print("[EdgeX] Public WS connected")
+            else:
+                print("[EdgeX] Public WS connection failed, will use REST")
+                self._public_ws = None
+
+            # Private WS (needs auth)
+            signature, timestamp = self._generate_ws_auth_signature()
+            self._private_ws = EdgeXPrivateWSClient(self.account_id, signature, timestamp)
+            connected = await self._private_ws.connect()
+            if connected:
+                print("[EdgeX] Private WS connected")
+                # Wait for initial snapshot
+                await self._private_ws.wait_snapshot_ready(timeout=5.0)
+            else:
+                print("[EdgeX] Private WS connection failed, will use REST")
+                self._private_ws = None
+
+        except Exception as e:
+            print(f"[EdgeX] WS init error: {e}")
+            self._public_ws = None
+            self._private_ws = None
+
+    def _generate_ws_auth_signature(self) -> tuple:
+        """Generate signature for private WS authentication (SDK style)"""
+        timestamp = str(int(time.time() * 1000))
+
+        # SDK style: path includes accountId without ? separator
+        path = f"/api/v1/private/wsaccountId={self.account_id}"
+        sign_content = f"{timestamp}GET{path}"
+
+        # Keccak256 hash
+        msg_hash = int.from_bytes(keccak(sign_content.encode()), "big")
+        msg_hash = msg_hash % self.K_MODULUS
+
+        # Sign
+        private_key_int = int(self.private_key_hex, 16)
+        r, s = sign(msg_hash, private_key_int)
+
+        # SDK uses just r+s (no y coordinate)
+        signature = r.to_bytes(32, "big").hex() + s.to_bytes(32, "big").hex()
+
+        return signature, timestamp
 
     def update_available_symbols(self):
         self.available_symbols['spot'] = []
@@ -137,17 +219,80 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
             print("spot is not supported yet")
             return
 
-        contract_info = self.market_info[symbol]
-        market_id = contract_info['contractId']
-        params = {"contractId": market_id}
+        contract_id = self._contract_id_map.get(symbol)
+        if not contract_id:
+            contract_info = self.market_info.get(symbol)
+            if not contract_info:
+                print(f"[EdgeX] Unknown symbol: {symbol}")
+                return None
+            contract_id = contract_info['contractId']
+
+        # Try WS first
+        if self._public_ws and self._public_ws.connected:
+            # Subscribe if not already
+            await self._public_ws.subscribe_ticker(contract_id)
+            # Wait for data
+            if await self._public_ws.wait_ticker_ready(contract_id, timeout=3.0):
+                price = self._public_ws.get_mark_price(contract_id)
+                if price:
+                    return Decimal(str(price))
+
+        # Fallback to REST
+        return await self._get_mark_price_rest(symbol, contract_id)
+
+    async def _get_mark_price_rest(self, symbol, contract_id):
+        """Get mark price via REST API"""
+        params = {"contractId": contract_id}
         oracle_url = f"{self.base_url}/api/v1/public/quote/getTicker"
-            
+
         async with aiohttp.ClientSession() as session:
             async with session.get(oracle_url, params=params) as resp:
                 ticker_data = await resp.json()
-                #print(ticker_data)
                 last_price = Decimal(ticker_data["data"][0]["lastPrice"])
                 return last_price
+
+    async def get_orderbook(self, symbol, limit: int = 50) -> Optional[Dict[str, Any]]:
+        """Get orderbook via WS (WS only, no REST fallback for depth)
+
+        Args:
+            symbol: Trading symbol
+            limit: Number of bids/asks to return (default 50)
+        """
+        is_spot = '/' in symbol
+        if is_spot:
+            print("spot orderbook is not supported yet")
+            return None
+
+        contract_id = self._contract_id_map.get(symbol)
+        if not contract_id:
+            contract_info = self.market_info.get(symbol)
+            if not contract_info:
+                print(f"[EdgeX] Unknown symbol: {symbol}")
+                return None
+            contract_id = contract_info['contractId']
+
+        if not self._public_ws or not self._public_ws.connected:
+            print("[EdgeX] Orderbook requires WS connection")
+            return None
+
+        # Subscribe with 200 levels (server-side)
+        await self._public_ws.subscribe_orderbook(contract_id, depth=200)
+        # Wait for snapshot
+        if await self._public_ws.wait_orderbook_ready(contract_id, timeout=5.0):
+            return self._public_ws.get_orderbook(contract_id, depth=limit)
+
+        return None
+
+    async def unsubscribe_orderbook(self, symbol) -> None:
+        """Unsubscribe from orderbook WS channel"""
+        contract_id = self._contract_id_map.get(symbol)
+        if not contract_id:
+            contract_info = self.market_info.get(symbol)
+            if contract_info:
+                contract_id = contract_info['contractId']
+
+        if contract_id and self._public_ws:
+            await self._public_ws.unsubscribe_orderbook(contract_id)
 
     async def create_order(self, symbol, side, amount, price=None, order_type='market'):
         is_spot = '/' in symbol
@@ -317,6 +462,57 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
         
     
     async def get_position(self, symbol):
+        contract_id = self._contract_id_map.get(symbol)
+        if not contract_id:
+            contract_info = self.market_info.get(symbol)
+            if not contract_info:
+                print(f"[EdgeX] Unknown symbol: {symbol}")
+                return None
+            contract_id = contract_info['contractId']
+
+        # Try WS first
+        if self._private_ws and self._private_ws._snapshot_received:
+            pos_data = self._private_ws.get_position(contract_id)
+            if pos_data:
+                return self._parse_ws_position(pos_data, symbol)
+            # No position for this symbol
+            return None
+
+        # Fallback to REST
+        return await self._get_position_rest(symbol)
+
+    def _parse_ws_position(self, pos_data: Dict[str, Any], symbol: str) -> Optional[Dict[str, Any]]:
+        """Parse position from WS data"""
+        size_str = pos_data.get('openSize', '0')
+        if size_str == '0' or size_str == '0.000':
+            return None
+
+        # Determine side from sign
+        size_float = float(size_str)
+        if size_float == 0:
+            return None
+
+        side = 'short' if size_float < 0 else 'long'
+        size = abs(size_float)
+
+        # Calculate entry price from openValue / openSize
+        open_value = float(pos_data.get('openValue', '0'))
+        entry_price = abs(open_value / size_float) if size_float != 0 else 0
+
+        # Unrealized PnL not directly available in WS data
+        # Would need current price to calculate
+        unrealized_pnl = 0
+
+        return {
+            "entry_price": round(entry_price, 2),
+            "unrealized_pnl": round(unrealized_pnl, 2),
+            "side": side,
+            "size": str(size),
+            "raw_data": pos_data
+        }
+
+    async def _get_position_rest(self, symbol):
+        """Get position via REST API"""
         method = "GET"
         path = "/api/v1/private/account/getAccountAsset"
         params = {
@@ -335,7 +531,7 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
             url = f"{self.base_url}{path}?{query_str}"
         else:
             url = f"{self.base_url}{path}"
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status != 200:
@@ -345,16 +541,26 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
                 data = await resp.json()
                 position_list = data['data']['positionList']
                 position_asset_list = data['data']['positionAssetList']
-                return self.parse_position(position_list,position_asset_list,symbol)
+                return self.parse_position(position_list, position_asset_list, symbol)
     
     async def close_position(self, symbol, position):
         return await super().close_position(symbol, position)
 
     async def close(self):
-        """No persistent session to close"""
-        pass
+        """Close WS connections"""
+        if self._public_ws:
+            await self._public_ws.close()
+            self._public_ws = None
+        if self._private_ws:
+            await self._private_ws.close()
+            self._private_ws = None
 
     async def get_collateral(self):
+        # REST only (WS doesn't provide available balance)
+        return await self._get_collateral_rest()
+
+    async def _get_collateral_rest(self):
+        """Get collateral via REST API"""
         method = "GET"
         path = "/api/v1/private/account/getAccountAsset"
         params = {
@@ -373,11 +579,11 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
             url = f"{self.base_url}{path}?{query_str}"
         else:
             url = f"{self.base_url}{path}"
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status != 200:
-                    print(f"[get_position] HTTP {resp.status}")
+                    print(f"[get_collateral] HTTP {resp.status}")
                     print(await resp.text())
                     return None
                 data = await resp.json()
@@ -392,13 +598,48 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
                 return {'available_collateral': available_collateral, 'total_collateral': total_collateral}
             
     async def get_open_orders(self, symbol):
-        contract_id = self.market_info[symbol]['contractId']
+        contract_id = self._contract_id_map.get(symbol)
+        if not contract_id:
+            contract_info = self.market_info.get(symbol)
+            if not contract_info:
+                print(f"[EdgeX] Unknown symbol: {symbol}")
+                return []
+            contract_id = contract_info['contractId']
+
+        # Try WS first
+        if self._private_ws and self._private_ws._snapshot_received:
+            orders = self._private_ws.get_open_orders(contract_id)
+            return self._parse_ws_open_orders(orders, symbol)
+
+        # Fallback to REST
+        return await self._get_open_orders_rest(symbol, contract_id)
+
+    def _parse_ws_open_orders(self, orders: list, symbol: str) -> list:
+        """Parse open orders from WS data"""
+        if not orders:
+            return []
+
+        return [
+            {
+                "symbol": symbol,
+                "id": o.get("id"),  # field is "id" not "orderId"
+                "size": o.get("size"),
+                "price": o.get("price"),
+                "side": o.get("side").lower(), # buy or sell
+                "order_type": o.get("type"),
+                "status": o.get("status")
+            }
+            for o in orders
+        ]
+
+    async def _get_open_orders_rest(self, symbol, contract_id):
+        """Get open orders via REST API"""
         method = "GET"
         path = "/api/v1/private/order/getActiveOrderPage"
         params = {
             "accountId": self.account_id,
             "size": "200",
-            "filterContractIdList": contract_id,  # ✅ 특정 심볼의 주문만
+            "filterContractIdList": contract_id,
         }
 
         signature, timestamp = self.generate_signature(method, path, params)
@@ -414,8 +655,6 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status != 200:
-                    #print(f"[get_open_orders] HTTP {resp.status}")
-                    #print(await resp.text())
                     return []
 
                 res = await resp.json()

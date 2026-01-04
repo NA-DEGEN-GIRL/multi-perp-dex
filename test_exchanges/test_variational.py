@@ -15,7 +15,9 @@ async def main():
     #res = await variational.initialize() # login and initialize
     #print(res.get('ok'))
     #await asyncio.sleep(0.5)
-    
+    price = await variational.get_mark_price(symbol) # 강제 250ms 단위 fetch가 이루어짐.
+    print(price)
+    return
     
     coll = await variational.get_collateral()
     print(coll)

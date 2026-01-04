@@ -31,7 +31,7 @@ from urllib.parse import urlparse
 
 import websockets
 from websockets.client import WebSocketClientProtocol
-from websockets.exceptions import ConnectionClosed, InvalidStatusCode
+from websockets.exceptions import ConnectionClosed, ConnectionClosedOK, ConnectionClosedError, InvalidStatusCode
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +303,7 @@ class BaseWSClient(ABC):
                 logger.warning(log_msg)
                 await self._handle_disconnect()
                 break
-            except ConnectionClosed as e:
+            except (ConnectionClosed, ConnectionClosedOK, ConnectionClosedError) as e:
                 log_msg = f"{self._log_prefix} connection closed (code={e.code}), reconnecting..."
                 print(log_msg)
                 logger.warning(log_msg)
@@ -311,10 +311,15 @@ class BaseWSClient(ABC):
                 break
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                log_msg = f"{self._log_prefix} recv error: {e}"
+            except json.JSONDecodeError as e:
+                log_msg = f"{self._log_prefix} JSON decode error: {e}, raw msg: {repr(msg[:200]) if len(msg) > 200 else repr(msg)}"
                 print(log_msg)
-                logger.error(log_msg)
+                logger.warning(log_msg)
+                continue  # Skip invalid JSON, don't break
+            except Exception as e:
+                log_msg = f"{self._log_prefix} recv error: {type(e).__name__}: {e}"
+                print(log_msg)
+                logger.error(log_msg, exc_info=True)
                 await asyncio.sleep(0.1)
 
     async def _ping_loop(self) -> None:

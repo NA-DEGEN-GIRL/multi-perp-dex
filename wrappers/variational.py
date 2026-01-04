@@ -684,6 +684,8 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         last_ms = int((cached or {}).get("last_price_at_ms") or 0)
         if cached and last_ms and (now_ms - last_ms) < thresh_ms:
             return cached.get("mark_price")
+
+        
         
         probe_qty = self.options.get("probe_qty", "0.0001")
         funding = int((cached or {}).get("funding_interval_s") or self.options.get("funding_interval_s", 3600))
@@ -692,6 +694,7 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         if force_refresh or (not cached or cached.get("mark_price") is None):
             try:
                 core = await self._fetch_indicative_quote(coin=coin, qty=probe_qty, funding_interval_s=funding)
+                
                 price = core.get("mark_price")
                 # [ADDED] 성공 시 타임스탬프 갱신(만약 내부에서 갱신 못했을 경우 보강)
                 self._rt_cache.setdefault(coin, {}).update({"mark_price": price, "last_price_at_ms": now_ms})
