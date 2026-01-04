@@ -42,9 +42,10 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
     
     elif exchange_platform == "grvt":
         return await Ex(
-            key_params.api_key, 
-            key_params.account_id, 
-            key_params.secret_key
+            key_params.api_key,
+            key_params.account_id,
+            key_params.secret_key,
+            use_ws=getattr(key_params, 'use_ws', True)
             ).init()
     
     elif exchange_platform == "backpack":

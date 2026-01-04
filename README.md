@@ -40,7 +40,7 @@
 | **Backpack** | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | WS Pool 공유 |
 | **StandX** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | 서버 미지원 항목 있음 |
 | **Variational** | 🔄 | 🔄 | ❌ | ❌ | ❌ | ❌ | ❌ | RFQ 방식 (WS 없음) |
-| **GRVT** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | REST only |
+| **GRVT** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | pysdk WS 래핑, use_ws=True 필요 |
 | **Paradex** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | REST only (CCXT) |
 
 ### 참고
@@ -420,7 +420,7 @@ WebSocket support by exchange. ✅ = WS supported, ❌ = REST only, 🔄 = RFQ s
 | **Backpack** | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | Shared WS Pool |
 | **StandX** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | Some server-side unsupported |
 | **Variational** | 🔄 | 🔄 | ❌ | ❌ | ❌ | ❌ | ❌ | RFQ style (no WS) |
-| **GRVT** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | REST only |
+| **GRVT** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | pysdk WS wrapping, use_ws=True required |
 | **Paradex** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | REST only (CCXT) |
 
 ### Notes
