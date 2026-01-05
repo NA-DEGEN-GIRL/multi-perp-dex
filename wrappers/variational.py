@@ -415,7 +415,7 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         # referer: coin이 있으면 해당 coin, 없으면 _last_viewed_coin (기본 BTC)
         referer_coin = coin.upper() if coin else self._last_viewed_coin
         referer = f"https://omni.variational.io/perpetual/{referer_coin}"
-        print(referer)
+        #print(referer)
         headers = {
             "accept": "*/*",
             "content-type": "application/json",
