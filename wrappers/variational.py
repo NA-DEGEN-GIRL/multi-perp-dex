@@ -261,6 +261,7 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         # 세션 상태(초기화/로그인 이후에는 캐시만 사용)
         self._session_ready: bool = False
         self._vr_token: Optional[str] = None  # 메모리 보관
+        self._last_viewed_coin: str = "BTC"  # referer용 기본 코인 (get_orderbook 호출 시 업데이트)
 
     def get_perp_quote(self, symbol, *, is_basic_coll=False):
         return 'USD'
@@ -411,7 +412,10 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
                 if not vr:
                     raise RuntimeError("유효한 세션(vr-token)이 없습니다. 먼저 initialize() 또는 login()을 호출하세요.")
 
-        referer = f"https://omni.variational.io/perpetual/{coin.upper()}" if coin else "https://omni.variational.io/"
+        # referer: coin이 있으면 해당 coin, 없으면 _last_viewed_coin (기본 BTC)
+        referer_coin = coin.upper() if coin else self._last_viewed_coin
+        referer = f"https://omni.variational.io/perpetual/{referer_coin}"
+        print(referer)
         headers = {
             "accept": "*/*",
             "content-type": "application/json",
@@ -708,6 +712,9 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         coin = str(symbol).upper()
         side = (side or "buy").lower()
 
+        # 주문 시 해당 coin을 기본 referer coin으로 설정
+        self._last_viewed_coin = coin
+
         # limit: instrument 필요 → 캐시 우선
         if price is not None or order_type == "limit":
             cached = self._rt_cache.get(coin)
@@ -811,6 +818,10 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         """
         await self.initialize_if_needed()
         coin = str(symbol).upper()
+
+        # get_orderbook 호출 시 해당 coin을 기본 referer coin으로 설정
+        # (오더북을 보고 있다 = 해당 페이지를 보고 있다는 의미)
+        self._last_viewed_coin = coin
 
         # 캐시 확인 (min_price_refresh_ms 이내면 캐시 사용)
         cached = self._rt_cache.get(coin)

@@ -6,19 +6,19 @@ import asyncio
 from keys.pk_variational import VARIATIONAL_KEY
 
 # test done
-coin = 'BTC'
+coin = 'ETH'
 symbol = symbol_create('variational',coin) # only perp atm
 
 async def main():
     variational = await create_exchange('variational',VARIATIONAL_KEY)
     res = await variational.get_available_symbols()
     print(res)
-    await variational.close()
+    #await variational.close()
     #return
     #res = await variational.initialize() # login and initialize
     #print(res.get('ok'))
     #await asyncio.sleep(0.5)
-    while True:
+    while False:
         #for sym in res['perp']:
         #    price = await variational.get_mark_price(sym) # 강제 250ms 단위 fetch가 이루어짐.
         #    print(sym, price)
@@ -31,11 +31,19 @@ async def main():
         
         await asyncio.sleep(0.5)
     
+    price = await variational.get_mark_price(symbol) # 강제 250ms 단위 fetch가 이루어짐.
+    print(symbol, price)
+    
+
+    l_price = price*0.97
+    res = await variational.create_order(symbol, 'buy', 0.0002, price=l_price)
+    print(res)
+    await asyncio.sleep(0.5)
     
     coll = await variational.get_collateral()
     print(coll)
     await asyncio.sleep(0.5)
-    return
+    
 
     position = await variational.get_position(symbol)
     print(position)
