@@ -41,7 +41,7 @@
 | **StandX** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | 서버 미지원 항목 있음 |
 | **Variational** | 🔄 | 🔄 | ❌ | ❌ | ❌ | ❌ | ❌ | RFQ 방식 (WS 없음) |
 | **GRVT** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | pysdk WS 래핑, use_ws=True 필요 |
-| **Paradex** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | REST only (CCXT) |
+| **Paradex** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | WS Pool, REST 초기 캐시 로드 |
 
 ### 참고
 - **WS Pool**: 여러 인스턴스가 동일한 WebSocket 연결을 공유하여 효율적으로 사용
@@ -448,7 +448,7 @@ WebSocket support by exchange. ✅ = WS supported, ❌ = REST only, 🔄 = RFQ s
 | **StandX** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | Some server-side unsupported |
 | **Variational** | 🔄 | 🔄 | ❌ | ❌ | ❌ | ❌ | ❌ | RFQ style (no WS) |
 | **GRVT** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | pysdk WS wrapping, use_ws=True required |
-| **Paradex** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | REST only (CCXT) |
+| **Paradex** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | WS Pool, REST initial cache |
 
 ### Notes
 - **WS Pool**: Multiple instances share the same WebSocket connection for efficiency
