@@ -330,20 +330,47 @@ asyncio.run(main())
 
 ---
 
-## 예제/테스트 스크립트 실행
+## 테스트 스크립트 실행
 
-레포에 포함된 간단한 테스트(예제) 스크립트를 그대로 실행할 수 있습니다.  
-실행 전, `keys/pk_*.py` 파일을 올바르게 작성했는지 확인하세요.
+통합 테스트 스크립트 `test_unified.py`를 사용하세요. 파일 상단의 설정만 변경하면 됩니다.
 
 ```bash
-python test_exchanges/test_lighter.py
-python test_exchanges/test_grvt.py
-python test_exchanges/test_paradex.py
-python test_exchanges/test_edgex.py
-python test_exchanges/test_backpack.py
-python test_exchanges/test_treadfi_hl.py
-python test_exchanges/test_variational.py
+python test_exchanges/test_unified.py
 ```
+
+### 설정 방법 (test_unified.py 상단)
+
+```python
+# 테스트할 거래소 선택
+EXCHANGE = "variational"
+# EXCHANGE = "lighter"
+# EXCHANGE = "hyperliquid"
+# ...
+
+# 테스트 코인 및 수량
+COIN = "BTC"
+AMOUNT = 0.0002
+
+# Skip할 테스트들 (True = skip)
+SKIP = {
+    "available_symbols": False,
+    "collateral": False,
+    "mark_price": False,
+    "orderbook": False,
+    "position": False,
+    "open_orders": False,
+    "limit_order": True,     # 주문 생성 (주의!)
+    "cancel_orders": True,   # 주문 취소
+    "market_order": True,    # 시장가 주문 (주의!)
+    "close_position": True,  # 포지션 종료 (주의!)
+}
+```
+
+### 출력 예시
+- `[WS]` : WebSocket 구현됨
+- `[REST fallback]` : WS 미지원으로 REST 폴백
+- `[REST]` : REST only
+- `-> Not implemented` : 해당 거래소에서 미구현
 
 ---
 
@@ -710,20 +737,47 @@ asyncio.run(main())
 
 ---
 
-## Running Example/Test Scripts
+## Running Test Script
 
-You can run the simple test (example) scripts included in the repo.
-Before running, ensure your `keys/pk_*.py` files are properly configured.
+Use the unified test script `test_unified.py`. Just modify the settings at the top of the file.
 
 ```bash
-python test_exchanges/test_lighter.py
-python test_exchanges/test_grvt.py
-python test_exchanges/test_paradex.py
-python test_exchanges/test_edgex.py
-python test_exchanges/test_backpack.py
-python test_exchanges/test_treadfi_hl.py
-python test_exchanges/test_variational.py
+python test_exchanges/test_unified.py
 ```
+
+### Configuration (top of test_unified.py)
+
+```python
+# Select exchange to test
+EXCHANGE = "variational"
+# EXCHANGE = "lighter"
+# EXCHANGE = "hyperliquid"
+# ...
+
+# Test coin and amount
+COIN = "BTC"
+AMOUNT = 0.0002
+
+# Tests to skip (True = skip)
+SKIP = {
+    "available_symbols": False,
+    "collateral": False,
+    "mark_price": False,
+    "orderbook": False,
+    "position": False,
+    "open_orders": False,
+    "limit_order": True,     # Order creation (caution!)
+    "cancel_orders": True,   # Order cancellation
+    "market_order": True,    # Market order (caution!)
+    "close_position": True,  # Close position (caution!)
+}
+```
+
+### Output Indicators
+- `[WS]` : WebSocket implemented
+- `[REST fallback]` : WS not supported, falling back to REST
+- `[REST]` : REST only
+- `-> Not implemented` : Not implemented for this exchange
 
 ---
 

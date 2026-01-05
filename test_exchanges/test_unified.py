@@ -15,7 +15,7 @@ from exchange_factory import create_exchange, symbol_create
 # ==================== 여기서 설정 ====================
 
 # 테스트할 거래소 선택 (하나만)
-EXCHANGE = "variational"
+EXCHANGE = "paradex"
 # EXCHANGE = "lighter"
 # EXCHANGE = "hyperliquid"
 # EXCHANGE = "edgex"
@@ -73,8 +73,10 @@ def load_key(exchange_name: str):
 def ws_info(exchange, method_name: str) -> str:
     """WS 지원 여부 메시지"""
     ws_supported = getattr(exchange, 'ws_supported', {})
-    if ws_supported.get(method_name):
+    if ws_supported.get(method_name) is True:
         return "[WS]"
+    elif ws_supported.get(method_name) is False:
+        return "[REST only]"
     elif ws_supported:
         return "[REST fallback]"
     return "[REST]"
