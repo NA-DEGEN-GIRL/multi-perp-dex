@@ -466,7 +466,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         amount: float,
         price: Optional[float] = None,
         order_type: str = "market",
-        reduce_only: bool = False,
+        is_reduce_only: bool = False,
         time_in_force: Optional[str] = None,
         client_order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -497,7 +497,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             "side": side.lower(),
             "order_type": order_type.lower(),
             "qty": qty_str,
-            "reduce_only": reduce_only,
+            "reduce_only": is_reduce_only,
         }
 
         # Time in force
@@ -523,7 +523,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         amount: float,
         price: Optional[float] = None,
         order_type: str = "market",
-        reduce_only: bool = False,
+        is_reduce_only: bool = False,
         time_in_force: Optional[str] = None,
         client_order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -536,7 +536,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             amount: Order quantity
             price: Order price (required for limit orders)
             order_type: "market" or "limit"
-            reduce_only: Only reduce position
+            is_reduce_only: Only reduce position
             time_in_force: "gtc", "ioc", or "alo"
             client_order_id: Custom order ID
         """
@@ -546,7 +546,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             amount=amount,
             price=price,
             order_type=order_type,
-            reduce_only=reduce_only,
+            is_reduce_only=is_reduce_only,
             time_in_force=time_in_force,
             client_order_id=client_order_id,
         )
@@ -656,27 +656,9 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
     # ----------------------------
     # Close Position
     # ----------------------------
-    async def close_position(self, symbol: str, position: Optional[Dict] = None, reduce_only: bool = True) -> Optional[Dict]:
+    async def close_position(self, symbol: str, position: Optional[Dict] = None) -> Optional[Dict]:
         """Close position with market order"""
-        if position is None:
-            position = await self.get_position(symbol)
-
-        if not position:
-            return None
-
-        size = position.get("size", "0")
-        if float(size) == 0:
-            return None
-
-        side = "sell" if position.get("side") == "long" else "buy"
-
-        return await self.create_order(
-            symbol=symbol,
-            side=side,
-            amount=float(size),
-            order_type="market",
-            reduce_only=reduce_only,
-        )
+        return await super().close_position(symbol, position)
 
     # ----------------------------
     # Leverage / Margin

@@ -831,6 +831,6 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         if self.ws_client:
             return await self.ws_client.unsubscribe_orderbook(symbol.upper())
 
-    async def close_position(self, symbol, position, *, is_reduce_only=False):
-        return await super().close_position(symbol, position, is_reduce_only=is_reduce_only)
+    async def close_position(self, symbol, position=None):
+        return await super().close_position(symbol, position)
         
