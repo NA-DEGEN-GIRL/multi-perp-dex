@@ -340,7 +340,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
                 "upnl": float,
             }
         """
-        """
+        
         # Try WS (cached data from initial load + WS updates)
         if self._prefer_ws and self.ws_client:
             ready = await self.ws_client.wait_collateral_ready(timeout=0.5)
@@ -350,7 +350,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
                     return self._parse_collateral(balance)
         # REST fallback
         print("[StandXExchange] get_collateral: REST fallback")
-        """
+        
         return await self.get_collateral_rest()
 
     async def get_collateral_ws(self, timeout: float = 5.0) -> Dict[str, Any]:
