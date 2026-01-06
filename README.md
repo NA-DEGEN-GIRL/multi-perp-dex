@@ -38,7 +38,7 @@
 | **Lighter** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | WS Pool 공유 |
 | **EdgeX** | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | Public/Private WS |
 | **Backpack** | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | WS Pool 공유 |
-| **StandX** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | REST 초기 캐시 + WS 업데이트, Order WS 별도 엔드포인트 |
+| **StandX** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | REST 초기 캐시 + WS 업데이트, Order WS 별도 엔드포인트, collateral은 REST 캐시 (1초 TTL) |
 | **Variational** | 🔄 | 🔄 | ❌ | ❌ | ❌ | ❌ | ❌ | RFQ 방식 (WS 없음) |
 | **GRVT** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | pysdk WS 래핑, use_ws=True 필요 |
 | **Paradex** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | WS Pool, REST 초기 캐시 로드 |
@@ -445,7 +445,7 @@ WebSocket support by exchange. ✅ = WS supported, ❌ = REST only, 🔄 = RFQ s
 | **Lighter** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | Shared WS Pool |
 | **EdgeX** | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | Public/Private WS |
 | **Backpack** | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | Shared WS Pool |
-| **StandX** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | Some server-side unsupported |
+| **StandX** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | REST initial cache + WS updates, separate Order WS endpoint, collateral uses REST cache (1s TTL) |
 | **Variational** | 🔄 | 🔄 | ❌ | ❌ | ❌ | ❌ | ❌ | RFQ style (no WS) |
 | **GRVT** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | pysdk WS wrapping, use_ws=True required |
 | **Paradex** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | WS Pool, REST initial cache |

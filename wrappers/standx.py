@@ -55,7 +55,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             "get_mark_price": True,
             "get_position": True,  # REST initial cache + WS updates
             "get_open_orders": True,  # REST initial cache + WS updates
-            "get_collateral": True,  # REST initial cache + WS updates (testing)
+            "get_collateral": False,  # WS exists, but no data
             "get_orderbook": True,
             "create_order": True,  # Order Response Stream (ws-api/v1)
             "cancel_orders": True,  # Order Response Stream (ws-api/v1)
@@ -84,6 +84,11 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         # WebSocket clients
         self.ws_client = None  # Market Stream (ws-stream/v1)
         self.order_ws_client = None  # Order Response Stream (ws-api/v1)
+
+        # REST cache for collateral (rate limit 방지)
+        self._collateral_cache: Optional[Dict[str, Any]] = None
+        self._collateral_cache_at: float = 0.0  # monotonic timestamp
+        self._collateral_cache_ttl_ms: float = 1000.0  # 1초 캐시 (기본값)
 
     async def init(self, login_port: Optional[int] = None, open_browser: bool = True) -> "StandXExchange":
         """
@@ -335,6 +340,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
                 "upnl": float,
             }
         """
+        """
         # Try WS (cached data from initial load + WS updates)
         if self._prefer_ws and self.ws_client:
             ready = await self.ws_client.wait_collateral_ready(timeout=0.5)
@@ -342,9 +348,9 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
                 balance = self.ws_client.get_collateral()
                 if balance:
                     return self._parse_collateral(balance)
-
         # REST fallback
         print("[StandXExchange] get_collateral: REST fallback")
+        """
         return await self.get_collateral_rest()
 
     async def get_collateral_ws(self, timeout: float = 5.0) -> Dict[str, Any]:
@@ -366,11 +372,30 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
 
         return self._parse_collateral(balance)
 
-    async def get_collateral_rest(self) -> Dict[str, Any]:
-        """GET /api/query_balance"""
+    async def get_collateral_rest(self, force: bool = False) -> Dict[str, Any]:
+        """
+        GET /api/query_balance with runtime cache
+
+        Args:
+            force: True면 캐시 무시하고 강제 fetch
+        """
+        now = time.monotonic()
+        elapsed_ms = (now - self._collateral_cache_at) * 1000
+
+        # 캐시가 유효하면 캐시 사용
+        if not force and self._collateral_cache and elapsed_ms < self._collateral_cache_ttl_ms:
+            return self._collateral_cache
+
+        # REST API 호출
         url = f"{STANDX_PERPS_BASE}/api/query_balance"
         data = await self._auth_get(url)
-        return self._parse_collateral(data)
+        parsed = self._parse_collateral(data)
+
+        # 캐시 업데이트
+        self._collateral_cache = parsed
+        self._collateral_cache_at = now
+
+        return parsed
 
     def _parse_collateral(self, data: Dict) -> Dict[str, Any]:
         """Parse balance response"""

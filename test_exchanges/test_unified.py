@@ -33,12 +33,12 @@ AMOUNT = 0.0002
 
 # Skip할 테스트들 (True = skip)
 SKIP = {
-    "available_symbols": False,
+    "available_symbols": True,
     "collateral": False,
-    "mark_price": False,
-    "orderbook": False,
-    "position": False,
-    "open_orders": False,
+    "mark_price": True,
+    "orderbook": True,
+    "position": True,
+    "open_orders": True,
     "limit_order": True,     # 주문 생성 (주의!)
     "cancel_orders": True,   # 주문 취소
     "market_order": True,    # 시장가 주문 (주의!)
@@ -128,19 +128,20 @@ async def main():
         await asyncio.sleep(0.2)
 
         # 2. Collateral
-        if not SKIP.get("collateral"):
-            print(f"\n[2] get_collateral() {ws_info(exchange, 'get_collateral')}")
-            try:
-                result = await exchange.get_collateral()
-                print(f"    {result}")
-            except NotImplementedError:
-                print(f"    -> Not implemented")
-            except Exception as e:
-                print(f"    ERROR: {e}")
-        else:
-            print("\n[2] get_collateral() - SKIPPED")
+        while True:
+            if not SKIP.get("collateral"):
+                print(f"\n[2] get_collateral() {ws_info(exchange, 'get_collateral')}")
+                try:
+                    result = await exchange.get_collateral()
+                    print(f"    {result}")
+                except NotImplementedError:
+                    print(f"    -> Not implemented")
+                except Exception as e:
+                    print(f"    ERROR: {e}")
+            else:
+                print("\n[2] get_collateral() - SKIPPED")
 
-        await asyncio.sleep(0.2)
+            await asyncio.sleep(0.2)
 
         # 3. Mark Price
         if not SKIP.get("mark_price"):
