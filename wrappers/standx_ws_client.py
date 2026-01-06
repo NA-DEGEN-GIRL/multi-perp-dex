@@ -33,7 +33,7 @@ class StandXWSClient(BaseWSClient):
     # - None: ping 없음 (기본값, 원래 StandX는 ping 보내면 서버가 끊음)
     # - 숫자: ping 간격 (테스트용)
     PING_INTERVAL = None  # 테스트: 30.0으로 변경해서 테스트 가능
-    RECV_TIMEOUT = 60.0  # 60초간 메시지 없으면 재연결
+    RECV_TIMEOUT = None # 60초간 메시지 없으면 재연결
     RECONNECT_MIN = 0.2
     RECONNECT_MAX = 30.0
 
@@ -604,7 +604,7 @@ class StandXOrderWSClient(BaseWSClient):
     WS_URL = STANDX_ORDER_WS_URL
     # ping 설정 (테스트: 30.0으로 변경)
     PING_INTERVAL = None  # 테스트: 30.0으로 변경해서 테스트 가능
-    RECV_TIMEOUT = 60.0
+    RECV_TIMEOUT = None
     RECONNECT_MIN = 0.2
     RECONNECT_MAX = 30.0
 
