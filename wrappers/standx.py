@@ -779,9 +779,9 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
     # ----------------------------
     # Close Position
     # ----------------------------
-    async def close_position(self, symbol: str, position: Optional[Dict] = None) -> Optional[Dict]:
+    async def close_position(self, symbol: str, position: Optional[Dict] = None, *, is_reduce_only: bool = True) -> Optional[Dict]:
         """Close position with market order"""
-        return await super().close_position(symbol, position)
+        return await super().close_position(symbol, position, is_reduce_only=is_reduce_only)
 
     # ----------------------------
     # Leverage / Margin

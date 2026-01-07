@@ -399,8 +399,8 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
         async with session.get(url, headers=headers, params=params) as resp:
             return await resp.json()
 
-    async def close_position(self, symbol, position):
-        return await super().close_position(symbol, position)
+    async def close_position(self, symbol, position, *, is_reduce_only=True):
+        return await super().close_position(symbol, position, is_reduce_only=is_reduce_only)
 
     async def get_orderbook(self, symbol) -> Optional[Dict[str, Any]]:
         """Get orderbook via WS"""

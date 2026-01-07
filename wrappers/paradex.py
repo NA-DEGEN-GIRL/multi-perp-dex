@@ -368,8 +368,8 @@ class ParadexExchange(MultiPerpDexMixin, MultiPerpDex):
 
         return parsed
 
-    async def close_position(self, symbol, position):
-        return await super().close_position(symbol, position)
+    async def close_position(self, symbol, position, *, is_reduce_only=True):
+        return await super().close_position(symbol, position, is_reduce_only=is_reduce_only)
 
     async def cancel_orders(self, symbol, open_orders=None):
         if open_orders is None:

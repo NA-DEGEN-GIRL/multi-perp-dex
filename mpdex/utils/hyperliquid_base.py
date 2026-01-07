@@ -959,8 +959,8 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
                     r["error"] = str(e)
         return results
 
-    async def close_position(self, symbol, position):
-        return await super().close_position(symbol, position, is_reduce_only=True)
+    async def close_position(self, symbol, position, *, is_reduce_only=True):
+        return await super().close_position(symbol, position, is_reduce_only=is_reduce_only)
 
     # -------------------- open_orders (공통 골격) --------------------
     def _normalize_open_order_rest(self, o: dict):

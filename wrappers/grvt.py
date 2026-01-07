@@ -228,8 +228,8 @@ class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
             "total_collateral": total_collateral
         }
     
-    async def close_position(self, symbol, position):
-        return await super().close_position(symbol, position)
+    async def close_position(self, symbol, position, *, is_reduce_only=True):
+        return await super().close_position(symbol, position, is_reduce_only=is_reduce_only)
     
     async def close(self, force_close: bool = True):
         """

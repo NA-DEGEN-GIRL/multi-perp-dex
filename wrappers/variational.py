@@ -870,8 +870,8 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         return list(self._asset_list)
     
     # 구현안해도됨
-    async def close_position(self, symbol, position):
-        return await super().close_position(symbol, position)
+    async def close_position(self, symbol, position, *, is_reduce_only=True):
+        return await super().close_position(symbol, position, is_reduce_only=is_reduce_only)
 
     async def close(self):
         """No persistent session to close"""

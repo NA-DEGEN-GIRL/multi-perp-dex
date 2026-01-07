@@ -10,7 +10,7 @@ class Template(MultiPerpDexMixin,MultiPerpDex):
     async def get_position(self, symbol):
         pass
     
-    async def close_position(self, symbol, position):
+    async def close_position(self, symbol, position, *, is_reduce_only=True):
         pass
     
     async def get_collateral(self):

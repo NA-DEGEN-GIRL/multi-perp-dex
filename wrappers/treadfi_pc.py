@@ -1015,6 +1015,6 @@ alert('Signing/Submit failed: ' + e.message);
 
 		return results
 
-	async def close_position(self, symbol: str, position: Optional[Dict] = None):
+	async def close_position(self, symbol: str, position: Optional[Dict] = None, *, is_reduce_only: bool = True):
 		"""Close position with market order"""
-		return await super().close_position(symbol, position)
+		return await super().close_position(symbol, position, is_reduce_only=is_reduce_only)

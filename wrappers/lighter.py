@@ -488,8 +488,8 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
                                 return self.parse_position(pos)
                 return None
     
-    async def close_position(self, symbol, position):
-        return await super().close_position(symbol, position)
+    async def close_position(self, symbol, position, *, is_reduce_only=True):
+        return await super().close_position(symbol, position, is_reduce_only=is_reduce_only)
 
     async def get_collateral(self, *, force_refresh: bool = False, ws_wait_timeout: float = 0.5) -> dict:
         """
