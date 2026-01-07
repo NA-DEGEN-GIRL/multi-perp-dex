@@ -367,7 +367,22 @@ class StandXAuth:
         return last_response
 
     def _login_html(self) -> str:
-        """Login UI HTML"""
+        """Load login UI HTML from built file (with Reown AppKit for WalletConnect)"""
+        # Try to load from built dist file
+        module_dir = Path(__file__).parent
+        dist_html = module_dir / "standx_login_ui" / "dist" / "index.html"
+
+        if dist_html.exists():
+            try:
+                return dist_html.read_text(encoding="utf-8")
+            except Exception as e:
+                print(f"[standx] Failed to load built HTML: {e}")
+
+        # Fallback to minimal HTML if build not available
+        return self._login_html_fallback()
+
+    def _login_html_fallback(self) -> str:
+        """Minimal fallback HTML (browser wallet only, no WalletConnect)"""
         return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -375,114 +390,85 @@ class StandXAuth:
 <title>StandX Login</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 24px; max-width: 600px; margin: 0 auto; }}
-.row {{ margin: 12px 0; }}
-input, textarea {{ width: 100%; padding: 8px; font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
-textarea {{ height: 120px; resize: vertical; }}
-button {{ padding: 12px 24px; cursor: pointer; font-size: 14px; margin-right: 8px; }}
+body {{ font-family: system-ui, sans-serif; padding: 24px; max-width: 500px; margin: 0 auto; background: #f5f5f5; }}
+.card {{ background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
+.row {{ margin: 16px 0; }}
+input, textarea {{ width: 100%; padding: 10px; font-size: 14px; font-family: monospace; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }}
+textarea {{ height: 80px; resize: vertical; }}
+.btn-group {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+button {{ padding: 12px 20px; cursor: pointer; font-size: 14px; border: none; border-radius: 8px; font-weight: 500; }}
 button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
-.status {{ padding: 12px; border-radius: 6px; margin-top: 12px; }}
-.status.success {{ background: #d4edda; color: #155724; }}
-.status.error {{ background: #f8d7da; color: #721c24; }}
-.status.info {{ background: #cce5ff; color: #004085; }}
-h2 {{ margin-bottom: 24px; }}
-label {{ font-weight: 500; display: block; margin-bottom: 4px; }}
+.btn-primary {{ background: #3b82f6; color: white; }}
+.btn-secondary {{ background: #6b7280; color: white; }}
+.status {{ padding: 12px; border-radius: 8px; margin-top: 16px; display: none; }}
+.status.success {{ background: #d1fae5; color: #065f46; display: block; }}
+.status.error {{ background: #fee2e2; color: #991b1b; display: block; }}
+.status.info {{ background: #dbeafe; color: #1e40af; display: block; }}
+h2 {{ margin: 0 0 20px; color: #1f2937; }}
+label {{ font-weight: 500; display: block; margin-bottom: 6px; color: #374151; }}
 </style>
 </head>
 <body>
+<div class="card">
 <h2>StandX Perps Login</h2>
-
 <div class="row">
     <label>Wallet Address</label>
     <input id="address" type="text" value="{self.wallet_address}" readonly />
 </div>
-
 <div class="row">
-    <button id="connectBtn">1. Connect Wallet</button>
-    <button id="prepareBtn" disabled>2. Get Message</button>
-    <button id="signBtn" disabled>3. Sign & Login</button>
+    <div class="btn-group">
+        <button id="connectBtn" class="btn-primary">Connect Wallet</button>
+        <button id="prepareBtn" class="btn-secondary" disabled>Get Message</button>
+        <button id="signBtn" class="btn-primary" disabled>Sign & Login</button>
+    </div>
 </div>
-
 <div class="row">
     <label>Message to Sign</label>
-    <textarea id="message" readonly placeholder="Click 'Get Message' to fetch the signing message..."></textarea>
+    <textarea id="message" readonly placeholder="Connect wallet first..."></textarea>
 </div>
-
-<div id="statusBox" class="status info" style="display:none;"></div>
-
+<div id="statusBox" class="status"></div>
+</div>
 <script>
 const $ = s => document.querySelector(s);
-let signedData = null;
-let connectedAddress = null;
-
-function showStatus(msg, type) {{
-    const box = $('#statusBox');
-    box.textContent = msg;
-    box.className = 'status ' + type;
-    box.style.display = 'block';
-}}
-
-// 1. Connect Wallet
+let signedData = null, connectedAddress = null;
+const showStatus = (msg, type) => {{ const b = $('#statusBox'); b.textContent = msg; b.className = 'status ' + type; }};
 $('#connectBtn').onclick = async () => {{
     try {{
-        if (!window.ethereum) throw new Error('No wallet detected. Please install MetaMask or Rabby.');
+        if (!window.ethereum) throw new Error('No wallet detected');
         const accounts = await window.ethereum.request({{ method: 'eth_requestAccounts' }});
         connectedAddress = accounts[0];
         $('#address').value = connectedAddress;
         $('#prepareBtn').disabled = false;
-        showStatus('Wallet connected: ' + connectedAddress, 'success');
-    }} catch (e) {{
-        showStatus('Connect failed: ' + e.message, 'error');
-    }}
+        $('#connectBtn').disabled = true;
+        showStatus('Connected: ' + connectedAddress, 'success');
+    }} catch (e) {{ showStatus('Connect failed: ' + e.message, 'error'); }}
 }};
-
-// 2. Get Message
 $('#prepareBtn').onclick = async () => {{
     try {{
-        showStatus('Fetching signing message...', 'info');
+        showStatus('Fetching message...', 'info');
         const r = await fetch('/prepare');
         const j = await r.json();
-        if (!j.ok) throw new Error(j.error || 'Failed to get message');
+        if (!j.ok) throw new Error(j.error || 'Failed');
         signedData = j.signedData;
         $('#message').value = j.message;
         $('#signBtn').disabled = false;
-        showStatus('Message ready. Click "Sign & Login" to proceed.', 'success');
-    }} catch (e) {{
-        showStatus('Prepare failed: ' + e.message, 'error');
-    }}
+        showStatus('Ready to sign', 'success');
+    }} catch (e) {{ showStatus('Failed: ' + e.message, 'error'); }}
 }};
-
-// 3. Sign & Login
 $('#signBtn').onclick = async () => {{
     try {{
-        if (!connectedAddress) throw new Error('Please connect wallet first');
-        if (!signedData) throw new Error('Please get message first');
-
+        if (!connectedAddress || !signedData) throw new Error('Connect wallet and get message first');
         const message = $('#message').value;
-        showStatus('Please sign the message in your wallet...', 'info');
-
-        const signature = await window.ethereum.request({{
-            method: 'personal_sign',
-            params: [message, connectedAddress]
-        }});
-
-        showStatus('Submitting login...', 'info');
-        const r = await fetch('/submit', {{
-            method: 'POST',
-            headers: {{ 'Content-Type': 'application/json' }},
-            body: JSON.stringify({{ signature, signedData }})
-        }});
+        showStatus('Please sign in your wallet...', 'info');
+        const signature = await window.ethereum.request({{ method: 'personal_sign', params: [message, connectedAddress] }});
+        showStatus('Submitting...', 'info');
+        const r = await fetch('/submit', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify({{ signature, signedData }}) }});
         const j = await r.json();
         if (!j.ok) throw new Error(j.error || 'Login failed');
-
         showStatus('Login successful! You can close this tab.', 'success');
         $('#signBtn').disabled = true;
-    }} catch (e) {{
-        showStatus('Sign/Login failed: ' + e.message, 'error');
-    }}
+    }} catch (e) {{ showStatus('Failed: ' + e.message, 'error'); }}
 }};
-
-// Auto-connect if wallet available
 window.addEventListener('load', async () => {{
     if (window.ethereum) {{
         try {{
@@ -491,7 +477,8 @@ window.addEventListener('load', async () => {{
                 connectedAddress = accounts[0];
                 $('#address').value = connectedAddress;
                 $('#prepareBtn').disabled = false;
-                showStatus('Wallet already connected: ' + connectedAddress, 'info');
+                $('#connectBtn').disabled = true;
+                showStatus('Connected: ' + connectedAddress, 'success');
             }}
         }} catch (e) {{}}
     }}

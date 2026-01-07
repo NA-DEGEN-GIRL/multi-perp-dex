@@ -42,3 +42,5 @@ working_proxies.txt
 
 test_exchanges/*
 !test_exchanges/test_unified.py
+
+node_modules/

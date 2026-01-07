@@ -40,4 +40,4 @@ packages = ["mpdex", "wrappers", "mpdex.utils"]
 py-modules = ["multi_perp_dex", "exchange_factory"]
 
 [tool.setuptools.package-data]
- "wrappers" = ["*.html"]
+"wrappers" = ["*.html", "standx_login_ui/dist/*.html"]
