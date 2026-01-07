@@ -3,6 +3,7 @@ StandX Perps Exchange Wrapper
 
 Implements MultiPerpDex interface for StandX perpetual trading.
 """
+import asyncio
 import json
 import time
 import aiohttp
@@ -89,6 +90,18 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         self._collateral_cache: Optional[Dict[str, Any]] = None
         self._collateral_cache_at: float = 0.0  # monotonic timestamp
         self._collateral_cache_ttl_ms: float = 1000.0  # 1초 캐시 (기본값)
+
+        # REST fallback counters (연속 fallback 횟수 추적)
+        self._fallback_lock = asyncio.Lock()
+        self._ws_fallback_count: Dict[str, int] = {
+            "get_mark_price": 0,
+            "get_position": 0,
+            "get_open_orders": 0,
+        }
+        self._order_ws_fallback_count: Dict[str, int] = {
+            "create_order": 0,
+            "cancel_orders": 0,
+        }
 
     async def init(self, login_port: Optional[int] = None, open_browser: bool = True) -> "StandXExchange":
         """
@@ -253,6 +266,63 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             await ORDER_WS_POOL.release(self.wallet_address, force_close=force_close)
             self.order_ws_client = None
 
+    def get_fallback_stats(self) -> Dict[str, Any]:
+        """
+        Get consecutive REST fallback counts for each WS client.
+
+        Returns:
+            {
+                "ws_client": {
+                    "get_mark_price": 0,
+                    "get_position": 0,
+                    "get_open_orders": 0,
+                    "total": 0,
+                },
+                "order_ws_client": {
+                    "create_order": 0,
+                    "cancel_orders": 0,
+                    "total": 0,
+                }
+            }
+        """
+        ws_total = sum(self._ws_fallback_count.values())
+        order_ws_total = sum(self._order_ws_fallback_count.values())
+
+        return {
+            "ws_client": {
+                **self._ws_fallback_count,
+                "total": ws_total,
+            },
+            "order_ws_client": {
+                **self._order_ws_fallback_count,
+                "total": order_ws_total,
+            },
+        }
+
+    async def reset_fallback_stats(self) -> None:
+        """Reset all fallback counters to 0"""
+        async with self._fallback_lock:
+            for key in self._ws_fallback_count:
+                self._ws_fallback_count[key] = 0
+            for key in self._order_ws_fallback_count:
+                self._order_ws_fallback_count[key] = 0
+
+    async def _increment_fallback(self, method: str, is_order_ws: bool = False) -> None:
+        """Increment fallback counter for a method"""
+        async with self._fallback_lock:
+            if is_order_ws:
+                self._order_ws_fallback_count[method] += 1
+            else:
+                self._ws_fallback_count[method] += 1
+
+    async def _reset_fallback(self, method: str, is_order_ws: bool = False) -> None:
+        """Reset fallback counter for a method (WS success)"""
+        async with self._fallback_lock:
+            if is_order_ws:
+                self._order_ws_fallback_count[method] = 0
+            else:
+                self._ws_fallback_count[method] = 0
+
     # ----------------------------
     # Symbol Info
     # ----------------------------
@@ -295,8 +365,11 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         """Get mark price (WS first, REST fallback)"""
         if self._prefer_ws:
             try:
-                return await self.get_mark_price_ws(symbol, timeout=0.5)
+                result = await self.get_mark_price_ws(symbol, timeout=0.5)
+                await self._reset_fallback("get_mark_price")
+                return result
             except (TimeoutError, Exception) as e:
+                await self._increment_fallback("get_mark_price")
                 print(f"[standx] get_mark_price falling back to REST: {e}")
         return await self.get_mark_price_rest(symbol)
 
@@ -427,9 +500,11 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         # Try WS first
         if self._prefer_ws:
             try:
-                return await self.get_position_ws(symbol, timeout=0.5)
+                result = await self.get_position_ws(symbol, timeout=0.5)
+                await self._reset_fallback("get_position")
+                return result
             except TimeoutError:
-                pass  # fallback to REST
+                await self._increment_fallback("get_position")
 
         # REST fallback
         print(f"[StandXExchange] get_position: REST fallback")
@@ -590,11 +665,15 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         # Try WS first
         if self._prefer_order_ws and self.order_ws_client:
             try:
-                return await self.order_ws_client.create_order(payload)
+                result = await self.order_ws_client.create_order(payload)
+                await self._reset_fallback("create_order", is_order_ws=True)
+                return result
             except Exception as e:
+                await self._increment_fallback("create_order", is_order_ws=True)
                 print(f"[StandXExchange] create_order WS failed, falling back to REST: {e}")
-                if not skip_rest:
-                    print('rest api skipeed on. no order at this moment')
+                if skip_rest:
+                    print('rest api skipped. no order at this moment')
+                    return None
 
         if not skip_rest:
             # REST fallback
@@ -639,11 +718,14 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         # Try WS first
         if self._prefer_order_ws and self.order_ws_client:
             try:
-                return await self.order_ws_client.cancel_order(
+                result = await self.order_ws_client.cancel_order(
                     order_id=order_id,
                     cl_ord_id=client_order_id,
                 )
+                await self._reset_fallback("cancel_orders", is_order_ws=True)
+                return result
             except Exception as e:
+                await self._increment_fallback("cancel_orders", is_order_ws=True)
                 print(f"[StandXExchange] cancel_order WS failed, falling back to REST: {e}")
 
         # REST fallback
@@ -665,9 +747,11 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             ready = await self.ws_client.wait_orders_ready(timeout=0.5)
             if ready:
                 orders = self.ws_client.get_open_orders(symbol)
+                await self._reset_fallback("get_open_orders")
                 return [self._parse_order(o) for o in orders]
 
         # REST fallback
+        await self._increment_fallback("get_open_orders")
         print(f"[StandXExchange] get_open_orders: REST fallback")
         url = f"{STANDX_PERPS_BASE}/api/query_open_orders"
         params = {"symbol": symbol} if symbol else {}
