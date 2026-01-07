@@ -593,10 +593,10 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
                 return await self.order_ws_client.create_order(payload)
             except Exception as e:
                 print(f"[StandXExchange] create_order WS failed, falling back to REST: {e}")
-                if skip_rest:
+                if not skip_rest:
                     print('rest api skipeed on. no order at this moment')
 
-        if skip_rest:
+        if not skip_rest:
             # REST fallback
             return await self._post_signed("/api/new_order", payload)
 
