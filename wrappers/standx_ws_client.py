@@ -569,9 +569,23 @@ class StandXWSPool:
             self._clients[key] = client
             return client
 
-    async def release(self, wallet_address: str) -> None:
-        """Release a client (does not close, just marks as available)"""
-        pass  # Keep connection alive for reuse
+    async def release(self, wallet_address: str, force_close: bool = False) -> None:
+        """
+        Release a client.
+
+        Args:
+            wallet_address: Wallet address key
+            force_close: If True, actually close and remove from pool
+        """
+        if not force_close:
+            return  # Keep connection alive for reuse
+
+        key = wallet_address.lower()
+        async with self._lock:
+            if key in self._clients:
+                client = self._clients.pop(key)
+                await client.close()
+                print(f"[StandXWSPool] Force closed: {key[:10]}...")
 
     async def close_all(self) -> None:
         """Close all connections"""
@@ -879,9 +893,23 @@ class StandXOrderWSPool:
             self._clients[key] = client
             return client
 
-    async def release(self, wallet_address: str) -> None:
-        """Release a client (keeps connection alive)"""
-        pass
+    async def release(self, wallet_address: str, force_close: bool = False) -> None:
+        """
+        Release a client.
+
+        Args:
+            wallet_address: Wallet address key
+            force_close: If True, actually close and remove from pool
+        """
+        if not force_close:
+            return  # Keep connection alive for reuse
+
+        key = wallet_address.lower()
+        async with self._lock:
+            if key in self._clients:
+                client = self._clients.pop(key)
+                await client.close()
+                print(f"[StandXOrderWSPool] Force closed: {key[:10]}...")
 
     async def close_all(self) -> None:
         """Close all connections"""

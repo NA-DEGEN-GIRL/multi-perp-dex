@@ -1210,10 +1210,17 @@ class HLWSClientPool:
 
         return sock
 
-    async def release(self, *, address: Optional[str] = None, client: Optional[HLWSClientRaw] = None) -> None:
+    async def release(
+        self,
+        *,
+        address: Optional[str] = None,
+        client: Optional[HLWSClientRaw] = None,
+        force_close: bool = False
+    ) -> None:
         """
         - client를 명시하면 그 소켓을 해제(권장)
         - 아니면 address 매핑으로 소켓을 찾아 해제
+        - force_close=True면 참조 카운트 무시하고 즉시 종료
         """
         async with self._lock:
             target: Optional[HLWSClientRaw] = client
@@ -1227,16 +1234,28 @@ class HLWSClientPool:
                 if target is None:
                     return
 
-            # refcnt--
-            self._refcnt_by_socket[target] = max(0, self._refcnt_by_socket.get(target, 1) - 1)
-            if self._refcnt_by_socket[target] == 0:
+            if force_close:
+                # 강제 종료: 참조 카운트 무시
                 try:
                     await target.close()
+                    print(f"[HLWSPool] Force closed: {addr_l[:10] if addr_l else 'public'}...")
                 finally:
                     self._refcnt_by_socket.pop(target, None)
                     try:
                         self._sockets.remove(target)
                     except ValueError:
                         pass
+            else:
+                # 일반 해제: 참조 카운트 감소
+                self._refcnt_by_socket[target] = max(0, self._refcnt_by_socket.get(target, 1) - 1)
+                if self._refcnt_by_socket[target] == 0:
+                    try:
+                        await target.close()
+                    finally:
+                        self._refcnt_by_socket.pop(target, None)
+                        try:
+                            self._sockets.remove(target)
+                        except ValueError:
+                            pass
 
 WS_POOL = HLWSClientPool()

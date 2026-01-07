@@ -179,10 +179,15 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
             else:
                 self.available_symbols['spot'].append(k)
     
-    async def close(self):
-        # [ADDED] WS 클라이언트 해제
+    async def close(self, force_close: bool = True):
+        """
+        Cleanup resources.
+
+        Args:
+            force_close: True (default) = 연결 종료, False = 풀에 유지
+        """
         if self._ws_client:
-            await LIGHTER_WS_POOL.release(self._account_id)
+            await LIGHTER_WS_POOL.release(self._account_id, force_close=force_close)
             self._ws_client = None
         await self.client.close()
     

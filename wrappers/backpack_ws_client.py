@@ -715,9 +715,28 @@ class BackpackWSPool:
                 await self._public_client.connect()
                 return self._public_client
 
-    async def release(self) -> None:
-        """Release client (does not close, just marks as available)"""
-        pass  # Keep connection alive for reuse
+    async def release(self, api_key: str = None, force_close: bool = False) -> None:
+        """
+        Release client.
+
+        Args:
+            api_key: API key (None = public client)
+            force_close: True면 연결 종료 및 풀에서 제거
+        """
+        if not force_close:
+            return  # Keep connection alive for reuse
+
+        async with self._lock:
+            if api_key:
+                if api_key in self._private_clients:
+                    client = self._private_clients.pop(api_key)
+                    await client.close()
+                    print(f"[BackpackWSPool] Force closed private: {api_key[:8]}...")
+            else:
+                if self._public_client:
+                    await self._public_client.close()
+                    self._public_client = None
+                    print("[BackpackWSPool] Force closed public client")
 
     async def close_all(self) -> None:
         """Close all connections"""

@@ -424,10 +424,16 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
         if self._ws_client:
             await self._ws_client.unsubscribe_orderbook(symbol)
 
-    async def close(self):
-        """Close the exchange connection"""
-        # WS pool manages lifecycle, we just release our reference
-        self._ws_client = None
+    async def close(self, force_close: bool = True):
+        """
+        Close the exchange connection.
+
+        Args:
+            force_close: True (default) = 연결 종료, False = 풀에 유지
+        """
+        if self._ws_client:
+            await WS_POOL.release(api_key=self.API_KEY, force_close=force_close)
+            self._ws_client = None
     
     async def cancel_orders(self, symbol, open_orders=None):
         if open_orders is not None and not isinstance(open_orders, list):

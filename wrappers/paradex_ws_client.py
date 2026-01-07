@@ -586,13 +586,25 @@ class ParadexWSPool:
             self._refcount += 1
             return self._client
 
-    async def release(self) -> None:
-        """WS 클라이언트 해제"""
+    async def release(self, force_close: bool = False) -> None:
+        """
+        WS 클라이언트 해제.
+
+        Args:
+            force_close: True면 참조 카운트 무시하고 즉시 종료
+        """
         async with self._lock:
-            self._refcount = max(0, self._refcount - 1)
-            if self._refcount == 0 and self._client:
-                await self._client.close()
-                self._client = None
+            if force_close:
+                if self._client:
+                    await self._client.close()
+                    self._client = None
+                    self._refcount = 0
+                    print("[ParadexWSPool] Force closed")
+            else:
+                self._refcount = max(0, self._refcount - 1)
+                if self._refcount == 0 and self._client:
+                    await self._client.close()
+                    self._client = None
 
 
 # 글로벌 풀 인스턴스

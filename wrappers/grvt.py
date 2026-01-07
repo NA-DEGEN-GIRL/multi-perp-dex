@@ -231,13 +231,25 @@ class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
     async def close_position(self, symbol, position):
         return await super().close_position(symbol, position)
     
-    async def close(self):
+    async def close(self, force_close: bool = True):
+        """
+        Close connection.
+
+        Args:
+            force_close: True (default) = 연결 종료, False = 풀에 유지
+        """
         # Close WS client if exists
         if self._ws_client:
             try:
-                await self._ws_client.close()
+                from wrappers.grvt_ws_client import release_grvt_ws_client
+                await release_grvt_ws_client(
+                    self.account_id,
+                    env="prod",  # or pass actual env
+                    force_close=force_close
+                )
             except Exception:
                 pass
+            self._ws_client = None
         # Close REST session and prevent __del__ from trying again
         if self.exchange._session and not self.exchange._session.closed:
             await self.exchange._session.close()

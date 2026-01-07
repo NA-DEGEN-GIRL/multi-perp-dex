@@ -189,7 +189,13 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             )
         return self._http
 
-    async def close(self):
+    async def close(self, force_close: bool = True):
+        """
+        Close connection.
+
+        Args:
+            force_close: True (default) = 연결 종료, False = 풀에 유지
+        """
         if self._http and not self._http.closed:
             await self._http.close()
         if self.ws_client:
@@ -197,7 +203,11 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
                 # Pool에서 가져온 경우 release
                 from wrappers.hyperliquid_ws_client import WS_POOL
                 try:
-                    await WS_POOL.release(address=self._ws_pool_key, client=self.ws_client)
+                    await WS_POOL.release(
+                        address=self._ws_pool_key,
+                        client=self.ws_client,
+                        force_close=force_close
+                    )
                 except Exception:
                     pass
             else:

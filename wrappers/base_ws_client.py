@@ -372,11 +372,25 @@ class BaseWSClient(ABC):
             self._ws = None
             await self._safe_close(old_ws)
 
-            # 기존 태스크 정리
-            if self._ping_task and not self._ping_task.done():
+            # 기존 태스크 정리 (취소 완료까지 대기)
+            # 현재 실행 중인 태스크는 제외 (자기 자신을 cancel하면 안 됨)
+            current_task = asyncio.current_task()
+
+            if self._ping_task and not self._ping_task.done() and self._ping_task is not current_task:
                 self._ping_task.cancel()
-            if self._recv_task and not self._recv_task.done():
+                try:
+                    await self._ping_task
+                except asyncio.CancelledError:
+                    pass
+            self._ping_task = None
+
+            if self._recv_task and not self._recv_task.done() and self._recv_task is not current_task:
                 self._recv_task.cancel()
+                try:
+                    await self._recv_task
+                except asyncio.CancelledError:
+                    pass
+            self._recv_task = None
 
             self._ws = await asyncio.wait_for(
                 websockets.connect(

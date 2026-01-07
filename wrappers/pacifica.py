@@ -80,12 +80,18 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
             )
         return self._http
     
-    async def close(self):
+    async def close(self, force_close: bool = True):
+        """
+        Close connection.
+
+        Args:
+            force_close: True (default) = 연결 종료, False = 풀에 유지
+        """
         if self._http and not self._http.closed:
             await self._http.close()
         if self.ws_client:
             from .pacifica_ws_client import PACIFICA_WS_POOL
-            await PACIFICA_WS_POOL.release(self.public_key)
+            await PACIFICA_WS_POOL.release(self.public_key, force_close=force_close)
             self.ws_client = None
     
     def get_perp_quote(self, symbol, *, is_basic_coll=False):

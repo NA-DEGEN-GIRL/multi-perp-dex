@@ -235,16 +235,22 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         except json.JSONDecodeError:
             return {"raw": text}
 
-    async def close(self):
-        """Cleanup - release WebSocket clients"""
+    async def close(self, force_close: bool = True):
+        """
+        Cleanup - release WebSocket clients.
+
+        Args:
+            force_close: If True (default), actually close and remove from pool.
+                         Set False to keep connection alive for reuse.
+        """
         if self.ws_client:
             from .standx_ws_client import WS_POOL
-            await WS_POOL.release(self.wallet_address)
+            await WS_POOL.release(self.wallet_address, force_close=force_close)
             self.ws_client = None
 
         if self.order_ws_client:
             from .standx_ws_client import ORDER_WS_POOL
-            await ORDER_WS_POOL.release(self.wallet_address)
+            await ORDER_WS_POOL.release(self.wallet_address, force_close=force_close)
             self.order_ws_client = None
 
     # ----------------------------

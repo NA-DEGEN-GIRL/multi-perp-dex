@@ -414,11 +414,16 @@ class ParadexExchange(MultiPerpDexMixin, MultiPerpDex):
 
     # ==================== Close ====================
 
-    async def close(self):
-        """연결 종료"""
+    async def close(self, force_close: bool = True):
+        """
+        연결 종료.
+
+        Args:
+            force_close: True (default) = 연결 종료, False = 풀에 유지
+        """
         # WS 해제
         if self._ws_initialized:
-            await PARADEX_WS_POOL.release()
+            await PARADEX_WS_POOL.release(force_close=force_close)
             self._ws_client = None
             self._ws_initialized = False
 

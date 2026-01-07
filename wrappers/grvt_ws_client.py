@@ -511,3 +511,22 @@ async def get_grvt_ws_client(
         GRVT_WS_POOL[pool_key] = client
 
     return GRVT_WS_POOL[pool_key]
+
+
+async def release_grvt_ws_client(account_id: str, env: str = "prod", force_close: bool = False) -> None:
+    """
+    Release a WS client from pool.
+
+    Args:
+        account_id: Account ID
+        env: Environment (prod/testnet)
+        force_close: True면 연결 종료 및 풀에서 제거
+    """
+    if not force_close:
+        return  # Keep connection alive for reuse
+
+    pool_key = f"{account_id}_{env}"
+    if pool_key in GRVT_WS_POOL:
+        client = GRVT_WS_POOL.pop(pool_key)
+        await client.close()
+        print(f"[GRVTWSPool] Force closed: {pool_key}")

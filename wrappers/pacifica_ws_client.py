@@ -853,9 +853,23 @@ class PacificaWSPool:
             self._clients[key] = client
             return client
 
-    async def release(self, _public_key: str) -> None:
-        """Release a client (does not close, keeps for reuse)"""
-        pass
+    async def release(self, public_key: str, force_close: bool = False) -> None:
+        """
+        Release a client.
+
+        Args:
+            public_key: Public key
+            force_close: True면 연결 종료 및 풀에서 제거
+        """
+        if not force_close:
+            return  # Keep connection alive for reuse
+
+        key = public_key
+        async with self._lock:
+            if key in self._clients:
+                client = self._clients.pop(key)
+                await client.close()
+                print(f"[PacificaWSPool] Force closed: {key[:10]}...")
 
     async def close_all(self) -> None:
         """Close all connections"""

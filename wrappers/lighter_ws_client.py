@@ -959,18 +959,33 @@ class LighterWSPool:
             self._refcnt[account_id] = 1
             return client
 
-    async def release(self, account_id: int) -> None:
-        """클라이언트 해제 (참조 카운트 0이면 종료)"""
+    async def release(self, account_id: int, force_close: bool = False) -> None:
+        """
+        클라이언트 해제.
+
+        Args:
+            account_id: Account ID
+            force_close: True면 참조 카운트 무시하고 즉시 종료
+        """
         async with self._lock:
             if account_id not in self._clients:
                 return
 
-            self._refcnt[account_id] = max(0, self._refcnt.get(account_id, 1) - 1)
-            if self._refcnt[account_id] == 0:
+            if force_close:
+                # 강제 종료: 참조 카운트 무시
                 client = self._clients.pop(account_id, None)
                 self._refcnt.pop(account_id, None)
                 if client:
                     await client.close()
+                    print(f"[LighterWSPool] Force closed: {account_id}")
+            else:
+                # 일반 해제: 참조 카운트 감소
+                self._refcnt[account_id] = max(0, self._refcnt.get(account_id, 1) - 1)
+                if self._refcnt[account_id] == 0:
+                    client = self._clients.pop(account_id, None)
+                    self._refcnt.pop(account_id, None)
+                    if client:
+                        await client.close()
 
 
 # 글로벌 풀 인스턴스
