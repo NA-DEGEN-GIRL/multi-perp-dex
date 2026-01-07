@@ -558,6 +558,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         is_reduce_only: bool = False,
         time_in_force: Optional[str] = None,
         client_order_id: Optional[str] = None,
+        skip_rest: bool = False,
     ) -> Dict[str, Any]:
         """
         Create order (WS first, REST fallback)
@@ -592,9 +593,12 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
                 return await self.order_ws_client.create_order(payload)
             except Exception as e:
                 print(f"[StandXExchange] create_order WS failed, falling back to REST: {e}")
+                if skip_rest:
+                    print('rest api skipeed on. no order at this moment')
 
-        # REST fallback
-        return await self._post_signed("/api/new_order", payload)
+        if skip_rest:
+            # REST fallback
+            return await self._post_signed("/api/new_order", payload)
 
     async def cancel_orders(self, symbol: str, open_orders: Optional[List] = None) -> Dict[str, Any]:
         """
