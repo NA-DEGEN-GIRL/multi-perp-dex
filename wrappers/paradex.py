@@ -339,7 +339,7 @@ class ParadexExchange(MultiPerpDexMixin, MultiPerpDex):
 
     # ==================== Order Operations (REST only) ====================
 
-    async def create_order(self, symbol, side, amount, price=None, order_type='market'):
+    async def create_order(self, symbol, side, amount, price=None, order_type='market', *, is_reduce_only=False):
         if price is not None:
             order_type = 'limit'
 

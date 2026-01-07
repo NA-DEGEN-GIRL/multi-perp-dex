@@ -358,7 +358,7 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
             return await self._ws_client.unsubscribe_orderbook(symbol)
         return False
 
-    async def create_order(self, symbol, side, amount, price=None, order_type='market'):
+    async def create_order(self, symbol, side, amount, price=None, order_type='market', *, is_reduce_only=False):
         if price is not None:
             order_type = 'limit'
         m_info = self.market_info[symbol]

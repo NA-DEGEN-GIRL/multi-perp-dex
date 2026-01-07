@@ -294,7 +294,7 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
         if contract_id and self._public_ws:
             await self._public_ws.unsubscribe_orderbook(contract_id)
 
-    async def create_order(self, symbol, side, amount, price=None, order_type='market'):
+    async def create_order(self, symbol, side, amount, price=None, order_type='market', *, is_reduce_only=False):
         is_spot = '/' in symbol
         if is_spot:
             print("spot is not supported yet")

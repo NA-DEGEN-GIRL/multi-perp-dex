@@ -243,7 +243,7 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
                 price = res['lastPrice']
             return price
 
-    async def create_order(self, symbol, side, amount, price=None, order_type='market'):
+    async def create_order(self, symbol, side, amount, price=None, order_type='market', *, is_reduce_only=False):
         if price != None:
             order_type = 'limit'
         

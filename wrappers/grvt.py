@@ -122,7 +122,7 @@ class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
             self.logger.error(e, exc_info=True)
             return None
         
-    async def create_order(self, symbol, side, amount, price=None, order_type='market'):
+    async def create_order(self, symbol, side, amount, price=None, order_type='market', *, is_reduce_only=False):
         # Try WS first (faster)
         if self._ws_client and self._ws_client.connected:
             try:

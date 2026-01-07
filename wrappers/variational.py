@@ -703,7 +703,7 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         except Exception:
             return None
     
-    async def create_order(self, symbol, side, amount, price=None, order_type="market"):
+    async def create_order(self, symbol, side, amount, price=None, order_type="market", *, is_reduce_only=False):
         """
         - market: indicative quote → quote_id 획득(캐시 갱신) → create_market_order(순차)
         - limit: 캐시된 instrument 사용. 없으면 해당 시점에 indicative 호출로 instrument를 캐시 → create_limit_order
