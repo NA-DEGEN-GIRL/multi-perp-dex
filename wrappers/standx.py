@@ -103,6 +103,9 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             "cancel_orders": 0,
         }
 
+        # Leverage update cache (symbol -> updated_leverage)
+        self._leverage_cache: Dict[str, int] = {}
+
     async def init(self, login_port: Optional[int] = None, open_browser: bool = True) -> "StandXExchange":
         """
         Initialize exchange: login and fetch symbol info
@@ -793,6 +796,46 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             "leverage": leverage,
         }
         return await self._post_signed("/api/change_leverage", payload)
+
+    async def update_leverage(self, symbol: str, leverage: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Update leverage for a symbol (skip if already updated to same value)
+
+        Args:
+            symbol: Trading pair (e.g., "BTC-USD")
+            leverage: New leverage value. If None, uses max_leverage from symbol info.
+
+        Returns:
+            {"status": "ok", ...} on success or {"status": "skipped", ...} if already updated
+        """
+        # Get symbol info for max_leverage
+        try:
+            info = self._get_symbol_info(symbol)
+        except ValueError:
+            # Symbol info not cached, try to fetch
+            await self._update_available_symbols()
+            info = self._get_symbol_info(symbol)
+
+        max_leverage = int(info.get("max_leverage", 20))
+        
+        # Use max leverage if not specified
+        target_leverage = leverage if leverage is not None else max_leverage
+
+        # Clamp to valid range
+        target_leverage = max(1, min(target_leverage, max_leverage))
+
+        # Check if already updated to this leverage
+        if symbol in self._leverage_cache and self._leverage_cache[symbol] == target_leverage:
+            return {"status": "skipped", "message": f"leverage already set to {target_leverage}"}
+
+        # Call change_leverage
+        try:
+            result = await self.change_leverage(symbol, target_leverage)
+            # Cache the updated leverage
+            self._leverage_cache[symbol] = target_leverage
+            return {"status": "ok", "leverage": target_leverage, "result": result}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     async def change_margin_mode(self, symbol: str, margin_mode: str) -> Dict[str, Any]:
         """
