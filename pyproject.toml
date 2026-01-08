@@ -34,10 +34,14 @@ dependencies = [
 
 
 [tool.setuptools]
-# 설치 대상 패키지를 명시적으로 제한하여 keys/, test_exchanges/는 설치 제외
-packages = ["mpdex", "wrappers", "mpdex.utils"]
-# 루트에 있는 단일 모듈도 함께 배포
+# 설치 대상 패키지를 명시적으로 제한하여 keys/, tests/는 설치 제외
+packages = ["mpdex", "mpdex.exchanges", "mpdex.utils", "wrappers"]
+# 루트에 있는 단일 모듈도 함께 배포 (하위 호환용)
 py-modules = ["multi_perp_dex", "exchange_factory"]
 
 [tool.setuptools.package-data]
-"wrappers" = ["*.html", "standx_login_ui/dist/*.html", "variational_login_ui/dist/*.html", "treadfi_login_ui/dist/*.html"]
+"mpdex.exchanges" = [
+    "standx_login_ui/dist/*.html",
+    "variational_login_ui/dist/*.html",
+    "treadfi_login_ui/dist/*.html",
+]
