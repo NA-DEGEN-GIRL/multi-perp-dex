@@ -12,7 +12,7 @@ import json
 import logging
 import time
 import uuid
-from typing import Optional, Dict, Any, Set, List
+from typing import Optional, Dict, Any, Set, List, Callable
 
 from .base_ws_client import BaseWSClient, _json_dumps
 
@@ -66,6 +66,10 @@ class StandXWSClient(BaseWSClient):
         # Reconnect event (for _send to wait)
         self._reconnect_event: asyncio.Event = asyncio.Event()
         self._reconnect_event.set()  # Initially not reconnecting
+
+        # Reconnect callback (called after _resubscribe completes)
+        # Set by external code (e.g., standx.py) to reload cache via REST
+        self.on_reconnect: Optional[Callable[[], Any]] = None
 
     # ==================== Abstract Method Implementations ====================
 
@@ -145,7 +149,7 @@ class StandXWSClient(BaseWSClient):
         self._orders.clear()
         self._authenticated = False
 
-        # 이벤트 초기화
+        # 이벤트 초기화 (on_reconnect 콜백에서 REST로 채운 후 set됨)
         self._position_event.clear()
         self._collateral_event.clear()
         self._orders_event.clear()
@@ -210,6 +214,16 @@ class StandXWSClient(BaseWSClient):
                 print(f"[StandXWSClient] ✗ Resubscribe {channel} failed: {e}")
 
         print(f"[StandXWSClient] ✓ Resubscribed: {len(self._price_subs)} price, {len(self._orderbook_subs)} orderbook, {len(user_channels_to_resub)} user")
+
+        # Reconnect callback: REST API로 캐시 갱신 (stale data 방지)
+        if self.on_reconnect:
+            try:
+                result = self.on_reconnect()
+                if asyncio.iscoroutine(result):
+                    await result
+                print(f"[StandXWSClient] ✓ on_reconnect callback completed")
+            except Exception as e:
+                print(f"[StandXWSClient] ✗ on_reconnect callback failed: {e}")
 
     def _build_ping_message(self) -> Optional[str]:
         """

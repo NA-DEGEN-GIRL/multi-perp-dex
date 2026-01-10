@@ -140,6 +140,8 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             wallet_address=self.wallet_address,
             jwt_token=self._auth.token,
         )
+        # Reconnect 후 REST API로 캐시 갱신하도록 콜백 등록
+        self.ws_client.on_reconnect = self._load_initial_cache
 
     async def _create_order_ws_client(self):
         """Create and authenticate Order WebSocket client (Order Response Stream)"""
