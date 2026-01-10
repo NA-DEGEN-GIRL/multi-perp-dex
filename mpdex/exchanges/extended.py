@@ -108,6 +108,9 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
 
         return self
 
+    def get_perp_quote(self, symbol):
+        return 'USD'
+
     async def _load_markets(self):
         """Load available markets from API (with trading_config for precision)"""
         try:
