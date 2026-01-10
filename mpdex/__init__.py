@@ -29,6 +29,7 @@ def __getattr__(name):
         "HyperliquidExchange": ("mpdex.exchanges.hyperliquid", "HyperliquidExchange"),
         "SuperstackExchange": ("mpdex.exchanges.superstack", "SuperstackExchange"),
         "StandXExchange": ("mpdex.exchanges.standx", "StandXExchange"),
+        "ExtendedExchange": ("mpdex.exchanges.extended", "ExtendedExchange"),
     }
     if name in mapping:
         mod, attr = mapping[name]
@@ -42,5 +43,5 @@ __all__ = [  # 공개 심볼 명시
     "LighterExchange", "BackpackExchange", "EdgexExchange", "GrvtExchange",
     "ParadexExchange", "TreadfiHlExchange", "TreadfiPcExchange",
     "VariationalExchange", "PacificaExchange", "HyperliquidExchange",
-    "SuperstackExchange", "StandXExchange"
+    "SuperstackExchange", "StandXExchange", "ExtendedExchange"
 ]

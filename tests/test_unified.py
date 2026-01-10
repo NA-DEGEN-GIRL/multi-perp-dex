@@ -24,8 +24,9 @@ from exchange_factory import create_exchange, symbol_create
 # EXCHANGE = "treadfi"
 # EXCHANGE = "grvt"
 # EXCHANGE = "paradex"
-EXCHANGE = "standx"
+# EXCHANGE = "standx"
 # EXCHANGE = "superstack"
+EXCHANGE = "extended"
 
 # 테스트 코인
 COIN = "BTC"
@@ -59,6 +60,7 @@ EXCHANGE_KEYS = {
     "paradex": ("keys.pk_paradex", "PARADEX_KEY"),
     "standx": ("keys.pk_standx", "STANDX_KEY"),
     "superstack": ("keys.pk_superstack", "SUPERSTACK_KEY"),
+    "extended": ("keys.pk_extended", "EXTENDED_KEY"),
 }
 
 # ==================== Helper ====================
@@ -128,20 +130,19 @@ async def main():
         await asyncio.sleep(0.2)
 
         # 2. Collateral
-        while True:
-            if not SKIP.get("collateral"):
-                print(f"\n[2] get_collateral() {ws_info(exchange, 'get_collateral')}")
-                try:
-                    result = await exchange.get_collateral()
-                    print(f"    {result}")
-                except NotImplementedError:
-                    print(f"    -> Not implemented")
-                except Exception as e:
-                    print(f"    ERROR: {e}")
-            else:
-                print("\n[2] get_collateral() - SKIPPED")
+        if not SKIP.get("collateral"):
+            print(f"\n[2] get_collateral() {ws_info(exchange, 'get_collateral')}")
+            try:
+                result = await exchange.get_collateral()
+                print(f"    {result}")
+            except NotImplementedError:
+                print(f"    -> Not implemented")
+            except Exception as e:
+                print(f"    ERROR: {e}")
+        else:
+            print("\n[2] get_collateral() - SKIPPED")
 
-            await asyncio.sleep(0.2)
+        await asyncio.sleep(0.2)
 
         # 3. Mark Price
         if not SKIP.get("mark_price"):

@@ -14,6 +14,7 @@ def _load(exchange_platform: str):  # [ADDED] 필요한 경우에만 모듈 로�
         "hyperliquid": ("mpdex.exchanges.hyperliquid","HyperliquidExchange"),
         "superstack": ("mpdex.exchanges.superstack","SuperstackExchange"),
         "standx": ("mpdex.exchanges.standx", "StandXExchange"),
+        "extended": ("mpdex.exchanges.extended", "ExtendedExchange"),
     }
     try:
         mod, cls = mapping[exchange_platform]
@@ -131,6 +132,16 @@ async def create_exchange(exchange_platform: str, key_params=None):  # [MODIFIED
             open_browser = getattr(key_params, 'open_browser', False),
         )
 
+    elif exchange_platform == "extended":
+        return await Ex(
+            api_key = key_params.api_key,
+            public_key = key_params.stark_public_key,
+            private_key = key_params.stark_private_key,
+            vault = key_params.vault_id,
+            network = getattr(key_params, 'network', 'mainnet'),
+            prefer_ws = getattr(key_params, 'prefer_ws', True),
+        ).init()
+
     else:
         raise ValueError(f"Unsupported exchange: {exchange_platform}")
 
@@ -151,6 +162,7 @@ SYMBOL_FORMATS = {
     "hyperliquid": lambda coin, q=None: coin.upper(), # use internal mapping
     "superstack": lambda coin, q=None: coin.upper(), # use internal mapping
     "standx": lambda coin, q=None: f"{coin.upper()}-USD",  # BTC-USD
+    "extended": lambda coin, q=None: f"{coin.upper()}-USD",  # BTC-USD
 }
 
 SPOT_SYMBOL_FORMATS = {
