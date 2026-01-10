@@ -22,6 +22,9 @@
   - hyperliquid 이지만, 주문관련 endpoint는 superstack wallet api로 생성
   - price / position 조회: Hyperliquid WS_POOL 공통모듈 사용
 - StandX (WS 지원)
+- Extended (x10-python-trading-starknet SDK)
+  - REST: 공식 SDK 사용
+  - WS: Account stream (position, orders, balance), Orderbook stream 직접 구현
 
 ---
 
@@ -42,6 +45,7 @@
 | **Variational** | 🔄 | 🔄 | ❌ | ❌ | ❌ | ❌ | ❌ | RFQ 방식 (WS 없음) |
 | **GRVT** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | pysdk WS 래핑, use_ws=True 필요 |
 | **Paradex** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | WS Pool, REST 초기 캐시 로드 |
+| **Extended** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | x10 SDK + WS, mark_price REST fallback |
 
 ### 참고
 - **WS Pool**: 여러 인스턴스가 동일한 WebSocket 연결을 공유하여 효율적으로 사용
@@ -122,6 +126,7 @@ cp keys/copy.pk_backpack.py keys/pk_backpack.py
 cp keys/copy.pk_treadfi_hl.py keys/pk_treadfi_hl.py
 cp keys/copy.pk_variational.py keys/variational.py
 cp keys/copy.pk_pacifica.py keys/pacifica.py
+cp keys/copy.pk_extended.py keys/pk_extended.py
 ```
 
 템플릿은 아래와 같이 Dataclass로 정의되어 있으며, `exchange_factory.create_exchange()`가 요구하는 필드명을 그대로 사용합니다.
@@ -136,6 +141,7 @@ cp keys/copy.pk_pacifica.py keys/pacifica.py
 - Variational: evm_wallet_address(str, required), session_cookies(dict, optional), evm_private_key(str, optional)
   - Variational: vr-token을 알고 있다면 별도의 로그인 절차가 필요 없습니다.
 - Pacifica: public_key(str), agent_public_key(str), agent_private_key(str)
+- Extended: api_key(str), stark_public_key(str), stark_private_key(str), vault_id(int), network(str, optional)
 
 ---
 
@@ -150,6 +156,7 @@ cp keys/copy.pk_pacifica.py keys/pacifica.py
 - Lighter: 코인 심볼 그대로(예: BTC)
 - TreadFi: `f"{COIN}:PERP-USDC"` 덱스 사용시, `f"{DEX}_{COIN}:PERP-USDC"`, 스팟 현재 미지원
 - Variational: `f"{COIN}"`
+- Extended: `f"{COIN}-USD"` (예: BTC-USD)
 
 ```python
 from mpdex import symbol_create
@@ -429,6 +436,9 @@ Provides exchange-specific implementations following a core interface, along wit
   - Based on Hyperliquid, but order endpoints use Superstack wallet API
   - price / position queries: Uses Hyperliquid WS_POOL common module
 - StandX (WS supported)
+- Extended (x10-python-trading-starknet SDK)
+  - REST: Uses official SDK
+  - WS: Account stream (position, orders, balance), Orderbook stream custom implementation
 
 ---
 
@@ -449,6 +459,7 @@ WebSocket support by exchange. ✅ = WS supported, ❌ = REST only, 🔄 = RFQ s
 | **Variational** | 🔄 | 🔄 | ❌ | ❌ | ❌ | ❌ | ❌ | RFQ style (no WS) |
 | **GRVT** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | pysdk WS wrapping, use_ws=True required |
 | **Paradex** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | WS Pool, REST initial cache |
+| **Extended** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | x10 SDK + WS, mark_price REST fallback |
 
 ### Notes
 - **WS Pool**: Multiple instances share the same WebSocket connection for efficiency
@@ -529,6 +540,7 @@ cp keys/copy.pk_backpack.py keys/pk_backpack.py
 cp keys/copy.pk_treadfi_hl.py keys/pk_treadfi_hl.py
 cp keys/copy.pk_variational.py keys/variational.py
 cp keys/copy.pk_pacifica.py keys/pacifica.py
+cp keys/copy.pk_extended.py keys/pk_extended.py
 ```
 
 Templates are defined as Dataclasses, using the exact field names required by `exchange_factory.create_exchange()`.
@@ -543,6 +555,7 @@ Templates are defined as Dataclasses, using the exact field names required by `e
 - Variational: evm_wallet_address(str, required), session_cookies(dict, optional), evm_private_key(str, optional)
   - Variational: If you know the vr-token, no separate login is required.
 - Pacifica: public_key(str), agent_public_key(str), agent_private_key(str)
+- Extended: api_key(str), stark_public_key(str), stark_private_key(str), vault_id(int), network(str, optional)
 
 ---
 
@@ -557,6 +570,7 @@ Each exchange uses different symbol (ticker) formats. Follow the rules below or 
 - Lighter: Coin symbol as-is (e.g., BTC)
 - TreadFi: `f"{COIN}:PERP-USDC"`, with dex: `f"{DEX}_{COIN}:PERP-USDC"`, spot not currently supported
 - Variational: `f"{COIN}"`
+- Extended: `f"{COIN}-USD"` (e.g., BTC-USD)
 
 ```python
 from mpdex import symbol_create
