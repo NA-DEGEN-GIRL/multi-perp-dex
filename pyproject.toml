@@ -29,7 +29,8 @@ dependencies = [
   # - pip, uv 모두 PEP 508 마커를 해석합니다.
   # - 링크는 사용자가 제공한 공식 PyPI CDN(files.pythonhosted.org) 휠입니다.
   "fastecdsa ; sys_platform != 'win32'",
-  "fastecdsa @ https://files.pythonhosted.org/packages/88/e4/0081bef22304409919e27e092b84f140e458901239ff9501f330cf593f0d/fastecdsa-2.3.0-cp310-cp310-win_amd64.whl ; python_version == '3.10' and platform_system == 'Windows' and platform_machine == 'AMD64'"
+  "fastecdsa @ https://files.pythonhosted.org/packages/88/e4/0081bef22304409919e27e092b84f140e458901239ff9501f330cf593f0d/fastecdsa-2.3.0-cp310-cp310-win_amd64.whl ; python_version == '3.10' and platform_system == 'Windows' and platform_machine == 'AMD64'",
+  "x10-python-trading-starknet"
 ]
 
 
