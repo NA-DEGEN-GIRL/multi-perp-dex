@@ -36,13 +36,13 @@ SKIP = {
     "available_symbols": True,
     "collateral": True,
     "mark_price": True,
-    "orderbook": True,
+    "orderbook": False,
     "position": True,
     "open_orders": True,
     "limit_order": True,     # 주문 생성 (주의!)
     "cancel_orders": True,   # 주문 취소
     "market_order": False,    # 시장가 주문 (주의!)
-    "close_position": True,  # 포지션 종료 (주의!)
+    "close_position": False,  # 포지션 종료 (주의!)
 }
 
 # ==================== 거래소별 키 설정 ====================
@@ -113,9 +113,9 @@ async def main():
         res = await exchange.update_leverage(symbol)
         print(res)
         await exchange.close()
-        return
+        break
         #await asyncio.sleep(5)
-    return
+    
 
     symbol = symbol_create(EXCHANGE, COIN)
     print(f"Symbol: {symbol}\n")

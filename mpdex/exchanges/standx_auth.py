@@ -102,7 +102,7 @@ class StandXAuth:
     # ----------------------------
     # Public API
     # ----------------------------
-    async def login(self, port: Optional[int] = None, open_browser: bool = True, expires_seconds: int = 604800) -> Dict[str, Any]:
+    async def login(self, port: Optional[int] = None, open_browser: bool = True, expires_seconds: int = 604800*12) -> Dict[str, Any]:
         """
         Login to StandX
 
