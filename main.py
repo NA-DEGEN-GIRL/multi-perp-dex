@@ -2,6 +2,9 @@ import asyncio
 import logging
 import argparse
 import random
+import os
+import sys
+import time
 from datetime import datetime
 import json
 from dataclasses import dataclass
@@ -341,7 +344,19 @@ async def main():
         await asyncio.sleep(2)
 
 if __name__ == "__main__":
-        if args.module:  # 🔸 명령이 있을 때만 실행
+    if args.module:
+        should_restart = True
+
+        try:
             asyncio.run(main())
-        else:
-            print('--module {명령어} 를 입력하세요')
+            should_restart = False  # 정상 종료
+        except KeyboardInterrupt:
+            should_restart = False
+            print("\n[Ctrl+C] 사용자 종료")
+        finally:
+            if should_restart:
+                print("\n[에러 발생] 30초 후 재시작...")
+                time.sleep(30)
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+    else:
+        print('--module {명령어} 를 입력하세요')

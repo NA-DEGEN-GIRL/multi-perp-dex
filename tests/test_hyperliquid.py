@@ -10,7 +10,7 @@ from keys.pk_superstack import SUPERSTACK_KEY
 # test done except spot order
 # test done superstack perp
 
-coin1 = 'BTC'
+coin1 = 'xyz:COPPER'
 amount1 = 0.0002
 symbol = symbol_create('hyperliquid',coin1) # only perp atm
 
@@ -29,13 +29,14 @@ async def main():
     hyperliquid = await create_exchange('hyperliquid',HYPERLIQUID_KEY)
     await asyncio.sleep(0.5)
 
+    res = await hyperliquid.get_position(symbol)
+    print(res)
+    return
+
     #res = await hyperliquid.get_available_symbols()
     #for s in res:
     #    print(res[s])
     
-    res = await hyperliquid.get_orderbook('kpepe')
-    print(res.get('bids', [])[:1], res.get('asks', [])[:1])
-    return
     
     while False:
         res = await hyperliquid.get_orderbook('xyz:XYZ100')

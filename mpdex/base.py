@@ -31,6 +31,10 @@ class MultiPerpDex(ABC):
         size:
         entry_price:
         unrealized_pnl:
+        # 추가
+        leverage_type: isolated / cross
+        leverage_value: int
+        liquidation_price: float or None
         """
         pass
     

@@ -197,6 +197,9 @@ class HLWSClientRaw(BaseWSClient):
     def get_positions_norm_for_user(self, address: str) -> Dict[str, Dict[str, Any]]:
         return dict(self._user_positions_by_dex_norm.get(address.lower().strip(), {}))
 
+    def get_positions_raw_for_user(self, address: str) -> Dict[str, Dict[str, Any]]:
+        return dict(self._user_positions_by_dex_raw.get(address.lower().strip(), {}))
+    
     def get_open_orders_for_user(self, address: str) -> List[Dict[str, Any]]:
         return list(self._user_open_orders.get(address.lower().strip(), []))
 

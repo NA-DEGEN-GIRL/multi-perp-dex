@@ -466,19 +466,77 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         표준 스키마로 변환합니다.
         반환 스키마:
         {"entry_price": float|None, "unrealized_pnl": float|None, "side": "long"|"short"|"flat", "size": float}
+        추가: lverage 정보, leverage_type, leverage_value, liquidation_price
+
+        {
+            "assetPositions": [
+                {
+                "position": {
+                    "coin": "ETH",
+                    "cumFunding": {
+                    "allTime": "514.085417",
+                    "sinceChange": "0.0",
+                    "sinceOpen": "0.0"
+                    },
+                    "entryPx": "2986.3",
+                    "leverage": {
+                    "rawUsd": "-95.059824",
+                    "type": "isolated",
+                    "value": 20
+                    },
+                    "liquidationPx": "2866.26936529",
+                    "marginUsed": "4.967826",
+                    "maxLeverage": 50,
+                    "positionValue": "100.02765",
+                    "returnOnEquity": "-0.0026789",
+                    "szi": "0.0335",
+                    "unrealizedPnl": "-0.0134"
+                },
+                "type": "oneWay"
+                }
+            ],
+            "crossMaintenanceMarginUsed": "0.0",
+            "crossMarginSummary": {
+                "accountValue": "13104.514502",
+                "totalMarginUsed": "0.0",
+                "totalNtlPos": "0.0",
+                "totalRawUsd": "13104.514502"
+            },
+            "marginSummary": {
+                "accountValue": "13109.482328",
+                "totalMarginUsed": "4.967826",
+                "totalNtlPos": "100.02765",
+                "totalRawUsd": "13009.454678"
+            },
+            "time": 1708622398623,
+            "withdrawable": "13104.514502"
+            }
         """
         def fnum(x, default=None):
             try:
                 return float(x)
             except Exception:
                 return default
+            
         if "entry_px" in pos or "size" in pos:
             size = fnum(pos.get("size"), 0.0) or 0.0
             side = pos.get("side") or ("long" if size > 0 else "short" if size < 0 else "flat")
-            return {"entry_price": fnum(pos.get("entry_px")), "unrealized_pnl": fnum(pos.get("upnl"), 0.0), "side": side, "size": abs(size)}
+            
+            # ws 추가 정보
+            leverage_type = pos.get("lev_type") or None
+            leverage_value = pos.get("lev_value") or None
+            liquidation_price = fnum(pos.get("liq_px"), None)
+            
+            return {"entry_price": fnum(pos.get("entry_px")), "unrealized_pnl": fnum(pos.get("upnl"), 0.0), "side": side, "size": abs(size), 
+                    "leverage_type": leverage_type, "leverage_value": leverage_value, "liquidation_price": liquidation_price}
+        
         size_signed = fnum(pos.get("szi"), 0.0) or 0.0
         side = "long" if size_signed > 0 else "short" if size_signed < 0 else "flat"
-        return {"entry_price": fnum(pos.get("entryPx")), "unrealized_pnl": fnum(pos.get("unrealizedPnl"), 0.0), "side": side, "size": abs(size_signed)}
+        liquidation_price = fnum(pos.get("liquidationPx"), None)
+        return {"entry_price": fnum(pos.get("entryPx")), "unrealized_pnl": fnum(pos.get("unrealizedPnl"), 0.0), "side": side, "size": abs(size_signed), 
+                "leverage_type": (pos.get("leverage") or {}).get("type"),
+                "leverage_value": (pos.get("leverage") or {}).get("value"),
+                "liquidation_price": liquidation_price}
 
     async def get_position(self, symbol: str):
         """
@@ -486,6 +544,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         반환 스키마:
           {"entry_price": float|None, "unrealized_pnl": float|None, "side": "long"|"short"|"flat", "size": float}
         """
+        
         try:
             pos = await self.get_position_ws(symbol)
             if pos:
@@ -493,6 +552,23 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         except Exception as e:
             print(f"hyperliquid: get_position falling back to rest api / symbol {symbol} / error in ws {e}")
         return await self.get_position_rest(symbol)
+    
+    async def get_position_raw_ws(self, symbol: str, timeout: float = 2.0):
+        address = (self.vault_address or self.wallet_address or "").lower()
+        if not address:
+            return None
+        
+        if not self.ws_client:
+            await self._create_ws_client()
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.ws_client.get_positions_raw_for_user(address):
+                break
+            await asyncio.sleep(0.05)
+        pos_by_dex = self.ws_client.get_positions_raw_for_user(address)
+        return pos_by_dex
+        #return None
 
     async def get_position_ws(self, symbol: str, timeout: float = 2.0):
         """
@@ -525,6 +601,49 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         """
         REST clearinghouseState를 dex별로 조회하여 포지션을 찾습니다.
         dex를 지정하지 않으면 self.dex_list 순서대로 검색합니다.
+        {
+            "assetPositions": [
+                {
+                "position": {
+                    "coin": "ETH",
+                    "cumFunding": {
+                    "allTime": "514.085417",
+                    "sinceChange": "0.0",
+                    "sinceOpen": "0.0"
+                    },
+                    "entryPx": "2986.3",
+                    "leverage": {
+                    "rawUsd": "-95.059824",
+                    "type": "isolated",
+                    "value": 20
+                    },
+                    "liquidationPx": "2866.26936529",
+                    "marginUsed": "4.967826",
+                    "maxLeverage": 50,
+                    "positionValue": "100.02765",
+                    "returnOnEquity": "-0.0026789",
+                    "szi": "0.0335",
+                    "unrealizedPnl": "-0.0134"
+                },
+                "type": "oneWay"
+                }
+            ],
+            "crossMaintenanceMarginUsed": "0.0",
+            "crossMarginSummary": {
+                "accountValue": "13104.514502",
+                "totalMarginUsed": "0.0",
+                "totalNtlPos": "0.0",
+                "totalRawUsd": "13104.514502"
+            },
+            "marginSummary": {
+                "accountValue": "13109.482328",
+                "totalMarginUsed": "4.967826",
+                "totalNtlPos": "100.02765",
+                "totalRawUsd": "13009.454678"
+            },
+            "time": 1708622398623,
+            "withdrawable": "13104.514502"
+            }
         """
         address = self.vault_address or self.wallet_address
         if not address:
