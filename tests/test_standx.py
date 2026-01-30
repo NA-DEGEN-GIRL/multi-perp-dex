@@ -108,14 +108,16 @@ async def main():
         print(res)
         #res = exchange.get_fallback_stats()
         #print(res)
-        res = await exchange.update_leverage(symbol)
-        print(res)
-        res = await exchange.update_leverage(symbol)
+        #res = await exchange.update_leverage(symbol)
+        #print(res)
+        #res = await exchange.update_leverage(symbol)
+        #print(res)
+        res = await exchange.get_leverage_info(symbol)
         print(res)
         await exchange.close()
         break
         #await asyncio.sleep(5)
-    
+    return
 
     symbol = symbol_create(EXCHANGE, COIN)
     print(f"Symbol: {symbol}\n")

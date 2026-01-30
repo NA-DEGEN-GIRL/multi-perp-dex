@@ -569,23 +569,31 @@ $('#signBtn').onclick = async () => {
 			base, quote = symbol.split('-')[0], symbol.split('-')[1]
 			return f"{base}/{quote}"
 	
-	async def update_leverage(self, symbol, leverage=None):
-		
+	async def update_leverage(self, symbol, leverage=None, margin_mode=None):
+
 		if self._leverage_updated_to_max:
-			return {"message":"already updated!"}
+			return {"status": "ok", "message": "already updated"}
 
 		symbol_ws = self._symbol_convert_for_ws(symbol)
 		_, _, max_leverage, only_isolated, _, _ = self.perp_asset_map.get(symbol_ws, (None,None,1,False,0,None))
-		margin_mode = "ISOLATED" if only_isolated else "CROSS"
-		
+
+		# Determine actual margin mode
+		requested_mode = (margin_mode or "cross").upper()
+		if only_isolated and requested_mode == "CROSS":
+			actual_margin_mode = "ISOLATED"
+			forced_msg = "symbol only supports isolated, forced from cross to isolated"
+		else:
+			actual_margin_mode = requested_mode
+			forced_msg = None
+
 		if not leverage:
 			leverage = max_leverage
 
 		payload = {
 			"account_ids": [self.account_id],
-			"margin_mode": margin_mode,
+			"margin_mode": actual_margin_mode,
 			"pair": symbol,
-			"leverage":leverage
+			"leverage": leverage
 		}
 		#print(payload)
 		
@@ -604,9 +612,14 @@ $('#signBtn').onclick = async () => {
 				data = json.loads(txt)
 			except Exception:
 				data = {"status": r.status, "text": txt}
-			
+
 			if data.get("message") == "Leverage changed successfully.":
 				self._leverage_updated_to_max = True
+				data["status"] = "ok"
+				data["leverage"] = leverage
+				data["margin_mode"] = actual_margin_mode.lower()
+			if forced_msg:
+				data["message"] = forced_msg
 			return data			
 			
 	async def get_position(self, symbol: str):

@@ -22,6 +22,11 @@ async def main():
 
     position = await pacifica.get_position(symbol)
     print(position)
+
+    # update leverage test
+    res = await pacifica.update_leverage(symbol, 5, "isolated")
+    print(res)
+
     return
 
     #available_symbols = pacifica.available_symbols.get('perp',[])

@@ -823,7 +823,7 @@ $('#signBtn').onclick = async () => {
 	# ----------------------------
 	# TreadFi Orders
 	# ----------------------------
-	async def update_leverage(self, symbol: str, leverage: Optional[int] = None):
+	async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None):
 		"""Update leverage via TreadFi API to max_leverage"""
 		# ws 조회는 pacifica symbol, treadfi 주문은 treadfi symbol 사용
 		pac_symbol = self._symbol_to_pacifica(symbol)
@@ -839,10 +839,11 @@ $('#signBtn').onclick = async () => {
 		meta = self._symbol_meta.get(pac_symbol, {})
 		max_lev = meta.get("max_leverage", 10)
 		lev = int(leverage or max_lev)
+		actual_margin_mode = (margin_mode or "cross").upper()  # TreadFi uses uppercase
 
 		payload = {
 			"account_ids": [self.account_id],
-			"margin_mode": "CROSS",
+			"margin_mode": actual_margin_mode,
 			"pair": symbol,
 			"leverage": lev,
 		}

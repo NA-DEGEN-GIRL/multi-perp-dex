@@ -30,7 +30,6 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
         prefer_ws: bool = True,
     ):
         super().__init__()
-
         # WS 지원 플래그
         self.ws_supported.update({
             "get_mark_price": True,  # Separate public stream
@@ -387,13 +386,17 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
 
         return orderbook
 
-    async def update_leverage(self, symbol: str, leverage: int) -> Dict[str, Any]:
-        """Update leverage for symbol"""
-        await self._client.account.update_leverage(market_name=symbol, leverage=Decimal(leverage))
+    async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None) -> Dict[str, Any]:
+        """Update leverage for symbol (margin_mode not supported in SDK yet)"""
+        lev = leverage if leverage is not None else 1
+        actual_margin_mode = (margin_mode or "cross").lower()
+        res = await self._client.account.update_leverage(market_name=symbol, leverage=Decimal(lev))
         return {
             "symbol": symbol,
-            "leverage": leverage,
-            "success": True,
+            "leverage": lev,
+            "margin_mode": actual_margin_mode,
+            "status": "ok",
+            "result": res,
         }
 
     async def get_available_symbols(self) -> Dict[str, List[str]]:

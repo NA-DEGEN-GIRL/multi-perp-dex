@@ -116,8 +116,8 @@ class PacificaWSClient(BaseWSClient):
             self._handle_orders(data.get("data", []))
             return
 
-        # Trading responses (create_order, cancel_order, update_leverage, etc.)
-        if channel in ("create_order", "create_market_order", "cancel_order", "cancel_all_orders", "update_leverage"):
+        # Trading responses (create_order, cancel_order, etc.)
+        if channel in ("create_order", "create_market_order", "cancel_order", "cancel_all_orders"):
             self._handle_trading_response(data)
             return
 
@@ -771,29 +771,6 @@ class PacificaWSClient(BaseWSClient):
             signature_payload["symbol"] = symbol.upper()
 
         return await self._send_signed_request("cancel_all_orders", signature_payload, timeout)
-
-    async def update_leverage_ws(
-        self,
-        symbol: str,
-        leverage: int,
-        timeout: float = 5.0,
-    ) -> Dict[str, Any]:
-        """
-        Update leverage via WebSocket.
-
-        Args:
-            symbol: Trading symbol
-            leverage: New leverage value
-
-        Returns:
-            Response dict
-        """
-        signature_payload = {
-            "symbol": symbol.upper(),
-            "leverage": leverage,
-        }
-
-        return await self._send_signed_request("update_leverage", signature_payload, timeout)
 
 
 # ----------------------------

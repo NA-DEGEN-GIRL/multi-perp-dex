@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 class MultiPerpDex(ABC):
     def __init__(self):
         self.has_spot = False
+        self.has_margin_mode = False # isolated / cross 지원 여부
         self.available_symbols = {}
         # WebSocket support flags for each function
         # Override in subclass if WS is implemented for that function
@@ -79,11 +80,28 @@ class MultiPerpDex(ABC):
         pass
 
     @abstractmethod
-    async def update_leverage(self, symbol, leverage):
+    async def update_leverage(self, symbol, leverage=None, margin_mode=None):
         """
         Update the leverage for the given symbol.
         Returns the result of the leverage update operation.
-        If leverage is none, make it MAX leverage.
+
+        Args:
+            symbol: Trading pair symbol
+            leverage: int or None. If None, uses max leverage for the symbol.
+            margin_mode: 'isolated' or 'cross' or None. If None, defaults to 'cross'.
+        """
+        pass
+
+    @abstractmethod
+    async def get_leverage_info(self, symbol):
+        """
+        Get current leverage settings for the given symbol.
+        Returns:
+            {
+                "symbol": str,
+                "leverage": int or None,
+                "margin_mode": 'isolated' or 'cross' or None,
+            }
         """
         pass
 
@@ -100,9 +118,23 @@ class MultiPerpDex(ABC):
         pass
 
 class MultiPerpDexMixin:
-    async def update_leverage(self, symbol, leverage):
-        """Default implementation: does nothing and returns None."""
-        raise NotImplementedError("update_leverage method not implemented.")
+    async def update_leverage(self, symbol, leverage=None, margin_mode=None):
+        """Default implementation: returns not_implemented status."""
+        return {
+            "symbol": symbol,
+            "leverage": None,
+            "margin_mode": margin_mode or "cross",
+            "status": "not_implemented",
+        }
+
+    async def get_leverage_info(self, symbol):
+        """Default implementation: returns not_implemented status."""
+        return {
+            "symbol": symbol,
+            "leverage": None,
+            "margin_mode": None,
+            "status": "not_implemented",
+        }
 
     async def get_available_symbols(self):
         """

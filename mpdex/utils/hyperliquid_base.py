@@ -955,21 +955,35 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
 
         raise last_error or RuntimeError("_send_action failed after retries")
 
-    async def update_leverage(self, symbol: str, leverage: Optional[int] = None, *, prefer_ws: bool = True, timeout: float = 5.0):
+    async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None, *, prefer_ws: bool = True, timeout: float = 5.0):
         if self._leverage_updated_to_max:
-            return {"status": "ok", "response": "already updated"}
+            return {"status": "ok", "message": "already updated"}
         dex, coin_key = parse_hip3_symbol(symbol.strip())
-        asset_id, _, max_lev, only_isolated, _ = await self._resolve_perp_asset_and_szdec(dex, coin_key)
+        asset_id, _, max_lev, only_isolated, *_ = await self._resolve_perp_asset_and_szdec(dex, coin_key)
         if asset_id is None:
-            return "asset not found"
+            return {"status": "error", "message": "asset not found"}
         lev = int(leverage or max_lev or 1)
-        action = {"type": "updateLeverage", "asset": int(asset_id), "isCross": not bool(only_isolated), "leverage": lev}
+
+        # Determine actual margin mode
+        requested_mode = (margin_mode or "cross").lower()
+        if only_isolated and requested_mode == "cross":
+            actual_mode = "isolated"
+            forced_msg = "symbol only supports isolated, forced from cross to isolated"
+        else:
+            actual_mode = requested_mode
+            forced_msg = None
+
+        is_cross = actual_mode == "cross"
+        action = {"type": "updateLeverage", "asset": int(asset_id), "isCross": is_cross, "leverage": lev}
         payload = await self._make_signed_payload(action)
         resp = await self._send_action(payload, prefer_ws=prefer_ws, timeout=timeout)
-        #print(resp,payload)
         if (resp or {}).get("status", "").lower() == "ok":
             self._leverage_updated_to_max = True
-        return resp
+
+        result = {"status": "ok", "leverage": lev, "margin_mode": actual_mode, "result": resp}
+        if forced_msg:
+            result["message"] = forced_msg
+        return result
 
     async def create_order(
         self,

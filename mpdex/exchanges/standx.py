@@ -103,8 +103,9 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             "cancel_orders": 0,
         }
 
-        # Leverage update cache (symbol -> updated_leverage)
-        self._leverage_cache: Dict[str, int] = {}
+        # Leverage update cache (symbol -> (leverage, margin_mode))
+        self._leverage_cache: Dict[str, Dict[str, Any]] = {}
+        self.has_margin_mode = True  # isolated / cross 지원
 
     async def init(self, login_port: Optional[int] = None, open_browser: bool = True) -> "StandXExchange":
         """
@@ -799,13 +800,14 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         }
         return await self._post_signed("/api/change_leverage", payload)
 
-    async def update_leverage(self, symbol: str, leverage: Optional[int] = None) -> Dict[str, Any]:
+    async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None) -> Dict[str, Any]:
         """
-        Update leverage for a symbol (skip if already updated to same value)
+        Update leverage and margin mode for a symbol (concurrent requests).
 
         Args:
             symbol: Trading pair (e.g., "BTC-USD")
             leverage: New leverage value. If None, uses max_leverage from symbol info.
+            margin_mode: "cross" or "isolated". If None, defaults to "cross".
 
         Returns:
             {"status": "ok", ...} on success or {"status": "skipped", ...} if already updated
@@ -814,28 +816,33 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         try:
             info = self._get_symbol_info(symbol)
         except ValueError:
-            # Symbol info not cached, try to fetch
             await self._update_available_symbols()
             info = self._get_symbol_info(symbol)
 
         max_leverage = int(info.get("max_leverage", 20))
-        
-        # Use max leverage if not specified
         target_leverage = leverage if leverage is not None else max_leverage
-
-        # Clamp to valid range
         target_leverage = max(1, min(target_leverage, max_leverage))
+        target_margin_mode = (margin_mode or "cross").lower()
 
-        # Check if already updated to this leverage
-        if symbol in self._leverage_cache and self._leverage_cache[symbol] == target_leverage:
-            return {"status": "skipped", "message": f"leverage already set to {target_leverage}"}
+        # Check if already updated to same settings
+        cached = self._leverage_cache.get(symbol)
+        if cached and cached.get("leverage") == target_leverage and cached.get("margin_mode") == target_margin_mode:
+            return {"status": "skipped", "message": f"already set to leverage={target_leverage}, margin_mode={target_margin_mode}"}
 
-        # Call change_leverage
+        # Execute both requests concurrently
         try:
-            result = await self.change_leverage(symbol, target_leverage)
-            # Cache the updated leverage
-            self._leverage_cache[symbol] = target_leverage
-            return {"status": "ok", "leverage": target_leverage, "result": result}
+            lev_result, margin_result = await asyncio.gather(
+                self.change_leverage(symbol, target_leverage),
+                self.change_margin_mode(symbol, target_margin_mode),
+            )
+            # Cache the updated settings
+            self._leverage_cache[symbol] = {"leverage": target_leverage, "margin_mode": target_margin_mode}
+            return {
+                "status": "ok",
+                "leverage": target_leverage,
+                "margin_mode": target_margin_mode,
+                "results": [lev_result, margin_result],
+            }
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
@@ -852,7 +859,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         }
         return await self._post_signed("/api/change_margin_mode", payload)
 
-    async def get_position_config(self, symbol: str) -> Dict[str, Any]:
+    async def get_leverage_info(self, symbol: str) -> Dict[str, Any]:
         """GET /api/query_position_config"""
         url = f"{STANDX_PERPS_BASE}/api/query_position_config"
         params = {"symbol": symbol}
