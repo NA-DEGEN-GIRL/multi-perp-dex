@@ -24,7 +24,7 @@ async def main():
     print(position)
 
     # update leverage test
-    res = await pacifica.update_leverage(symbol, 10, "cross")
+    res = await pacifica.update_leverage(symbol, 10, "isolated")
     print(res)
 
     res = await pacifica.get_leverage_info(symbol)

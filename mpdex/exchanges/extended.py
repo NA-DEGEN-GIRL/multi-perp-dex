@@ -387,17 +387,52 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
         return orderbook
 
     async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None) -> Dict[str, Any]:
-        """Update leverage for symbol (margin_mode not supported in SDK yet)"""
+        """Update leverage for symbol (only cross margin supported)"""
         lev = leverage if leverage is not None else 1
-        actual_margin_mode = (margin_mode or "cross").lower()
+        requested_mode = (margin_mode or "cross").lower()
+
+        message = None
+        if requested_mode == "isolated":
+            message = "Extended only supports cross margin. Using cross instead."
+            print(f"[extended] {message}")
+
         res = await self._client.account.update_leverage(market_name=symbol, leverage=Decimal(lev))
-        return {
+        result = {
             "symbol": symbol,
             "leverage": lev,
-            "margin_mode": actual_margin_mode,
+            "margin_mode": "cross",
             "status": "ok",
             "result": res,
         }
+        if message:
+            result["message"] = message
+        return result
+
+    async def get_leverage_info(self, symbol: str) -> Dict[str, Any]:
+        """Get leverage info for symbol (only cross margin supported)"""
+        try:
+            res = await self._client.account.get_leverage(market_names=[symbol])
+            # res: status='OK' data=[AccountLeverage(market='BTC-USD', leverage=Decimal('50'))]
+            leverage = None
+            if res and res.data:
+                for item in res.data:
+                    if item.market == symbol:
+                        leverage = int(item.leverage)
+                        break
+            return {
+                "symbol": symbol,
+                "leverage": leverage,
+                "margin_mode": "cross",
+                "status": "ok",
+            }
+        except Exception as e:
+            return {
+                "symbol": symbol,
+                "leverage": None,
+                "margin_mode": None,
+                "status": "error",
+                "message": str(e),
+            }
 
     async def get_available_symbols(self) -> Dict[str, List[str]]:
         """Get available trading symbols"""

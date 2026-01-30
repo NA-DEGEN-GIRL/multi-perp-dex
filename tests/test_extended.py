@@ -67,6 +67,13 @@ async def main():
     symbol = symbol_create("extended", COIN)
     print(f"Symbol: {symbol}\n")
 
+    res = await exchange.update_leverage(symbol, 50, "isolated")
+    print(f"Update Leverage: {res}\n")
+
+    res = await exchange.get_leverage_info(symbol)
+    print(f"Leverage Info: {res}\n")
+    return
+
     price = None
 
     try:
