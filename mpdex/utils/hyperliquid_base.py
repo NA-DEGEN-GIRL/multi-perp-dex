@@ -985,6 +985,107 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             result["message"] = forced_msg
         return result
 
+    async def get_leverage_info(self, symbol: str, *, prefer_ws: bool = True, timeout: float = 5.0) -> Dict[str, Any]:
+        """
+        Get current leverage settings for a symbol via activeAssetData.
+
+        Args:
+            symbol: Trading pair symbol (e.g., "BTC", "ETH:PERP-USDC")
+            prefer_ws: If True, try WS first then fallback to REST
+            timeout: Timeout for WS subscription
+
+        Returns:
+            {
+                "symbol": str,
+                "leverage": int,
+                "margin_mode": "cross" or "isolated",
+                "status": "ok",
+                "mark_price": str,
+                "max_trade_sizes": [str, str],
+                "available_to_trade": [str, str],
+            }
+        """
+        dex, coin = parse_hip3_symbol(symbol.strip())
+
+        if prefer_ws:
+            try:
+                return await self.get_leverage_info_ws(coin, timeout=timeout)
+            except Exception as e:
+                print(f"[HL] get_leverage_info WS failed, falling back to REST: {e}")
+
+        return await self.get_leverage_info_rest(coin)
+
+    async def get_leverage_info_ws(self, coin: str, timeout: float = 5.0) -> Dict[str, Any]:
+        """Get leverage info via WebSocket (subscribe → receive → unsubscribe)"""
+        if not self.ws_client:
+            await self._create_ws_client()
+
+        coin_upper = coin.upper()
+        address = self.vault_address or self.wallet_address
+        user_lower = address.lower()
+        subscription = {"type": "activeAssetData", "user": address, "coin": coin_upper}
+
+        # Setup event for waiting
+        key = (user_lower, coin_upper)
+        self.ws_client._active_asset_events[key] = asyncio.Event()
+
+        try:
+            # Subscribe
+            await self.ws_client.send_subscribe(subscription)
+
+            # Wait for data with timeout
+            try:
+                await asyncio.wait_for(self.ws_client._active_asset_events[key].wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                raise TimeoutError(f"WS activeAssetData not ready for {coin}")
+
+            # Get cached data
+            data = self.ws_client.get_active_asset_data(coin_upper, user=address)
+            if not data:
+                raise ValueError(f"No data received for {coin}")
+
+            return self._parse_leverage_info(coin, data)
+
+        finally:
+            # Unsubscribe and cleanup
+            try:
+                await self.ws_client.send_unsubscribe(subscription)
+            except Exception:
+                pass
+            self.ws_client._active_asset_events.pop(key, None)
+            self.ws_client._active_asset_data.pop(key, None)
+
+    async def get_leverage_info_rest(self, coin: str) -> Dict[str, Any]:
+        """Get leverage info via REST API"""
+        address = self.vault_address or self.wallet_address
+        s = self._session()
+        payload = {
+            "type": "activeAssetData",
+            "user": address,
+            "coin": coin.upper(),
+        }
+
+        async with s.post(f"{self.http_base}/info", json=payload, headers={"Content-Type": "application/json"}) as r:
+            if r.status != 200:
+                text = await r.text()
+                return {"status": "error", "message": f"REST failed: {r.status} {text}"}
+            data = await r.json()
+
+        return self._parse_leverage_info(coin, data)
+
+    def _parse_leverage_info(self, coin: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse activeAssetData response to standard format"""
+        leverage_info = data.get("leverage", {})
+        return {
+            "symbol": coin,
+            "leverage": leverage_info.get("value"),
+            "margin_mode": leverage_info.get("type"),
+            "status": "ok",
+            "mark_price": data.get("markPx"),
+            "max_trade_sizes": data.get("maxTradeSzs"),
+            "available_to_trade": data.get("availableToTrade"),
+        }
+
     async def create_order(
         self,
         symbol: str,

@@ -34,6 +34,9 @@ async def main():
 
     res = await hyperliquid.update_leverage(symbol, None, "cross")
     print(res)
+
+    res = await hyperliquid.get_leverage_info(symbol)
+    print(res)
     return
 
     #res = await hyperliquid.get_available_symbols()

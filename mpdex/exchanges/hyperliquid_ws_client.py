@@ -117,6 +117,10 @@ class HLWSClientRaw(BaseWSClient):
         self._orderbook_events: Dict[str, asyncio.Event] = {}  # coin -> Event (첫 스냅샷 대기용)
         self._orderbook_sub_counts: Dict[str, int] = {}  # 구독 레퍼런스 카운트 (coin -> count)
         self._orderbook_sub_lock = asyncio.Lock()  # 레퍼런스 카운트 race condition 방지
+
+        # [ADDED] activeAssetData 캐시: (user, coin) -> data
+        self._active_asset_data: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._active_asset_events: Dict[Tuple[str, str], asyncio.Event] = {}
     
     def user_count(self) -> int:
         return len(self._user_subs)
@@ -425,6 +429,21 @@ class HLWSClientRaw(BaseWSClient):
             await self._ws.send(_json_dumps(payload))
             self._active_subs.add(key)
 
+    async def send_subscribe(self, sub: dict) -> None:
+        """Public method to subscribe (for external use)."""
+        await self._send_subscribe(sub)
+
+    async def send_unsubscribe(self, sub: dict) -> None:
+        """unsubscribe 메시지 전송."""
+        key = _sub_key(sub)
+        async with self._send_lock:
+            if not self._ws:
+                logger.warning(f"send_unsubscribe skipped (conn is None): {key}")
+                return
+            payload = {"method": "unsubscribe", "subscription": sub}
+            await self._ws.send(_json_dumps(payload))
+            self._active_subs.discard(key)
+
     def _normalize_position(self, pos: Dict[str, Any]) -> Dict[str, Any]:
         """
         webData3.clearinghouseState.assetPositions[*].position → 표준화 dict
@@ -458,8 +477,8 @@ class HLWSClientRaw(BaseWSClient):
             "roe": f(pos.get("returnOnEquity"), None),
             "liq_px": f(pos.get("liquidationPx"), None),
             "margin_used": f(pos.get("marginUsed"), None),
-            "lev_type": lev_type,
-            "lev_value": lev_value,
+            "margin_mode": lev_type,
+            "leverage": lev_value,
             "max_leverage": (int(float(pos.get("maxLeverage"))) if pos.get("maxLeverage") is not None else None),
             "raw": pos,  # 원본도 보관(디버깅/확장용)
         }
@@ -802,7 +821,20 @@ class HLWSClientRaw(BaseWSClient):
             if u:
                 self._user_balances[u] = balances
             return
-        
+
+        # [ADDED] activeAssetData 채널 처리
+        if ch == "activeAssetData":
+            data = msg.get("data") or {}
+            user = str(data.get("user") or "").lower().strip()
+            coin = str(data.get("coin") or "").upper()
+            if user and coin:
+                key = (user, coin)
+                self._active_asset_data[key] = data
+                ev = self._active_asset_events.get(key)
+                if ev and not ev.is_set():
+                    ev.set()
+            return
+
         # 통합 Perp 계정 상태
         if ch == "allDexsClearinghouseState":
             data = msg.get("data") or {}
@@ -876,6 +908,11 @@ class HLWSClientRaw(BaseWSClient):
     def get_mark_price(self, symbol: str) -> Optional[float]:
         """Get mark price for symbol (alias for get_price)."""
         return self.get_price(symbol)
+
+    def get_active_asset_data(self, coin: str, user: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get cached activeAssetData for a coin."""
+        u = (user or self.address or "").lower().strip()
+        return self._active_asset_data.get((u, coin.upper()))
 
     # -------------------- [ADDED] Orderbook 기능 --------------------
     def _get_original_coin_name(self, coin_upper: str) -> str:
