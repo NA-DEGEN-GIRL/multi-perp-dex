@@ -267,6 +267,52 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
             return {"status": "ok", "leverage": lev_value, "margin_mode": actual_margin_mode, "result": result}
         return {"status": "error", "result": result}
 
+    async def get_leverage_info(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get leverage info for symbol via /account/settings API.
+        Note: If no custom settings, returns default (cross margin, max leverage).
+        """
+        symbol = symbol.upper()
+        meta = self._get_meta(symbol)
+        max_lev = meta.get("max_leverage", 1)
+
+        url = f"{BASE_URL}/account/settings"
+        s = self._session()
+        params = {"account": self.public_key}
+
+        try:
+            async with s.get(url, params=params) as r:
+                r.raise_for_status()
+                data = await r.json()
+
+            settings_list = data.get("data") or []
+            for setting in settings_list:
+                if setting.get("symbol") == symbol:
+                    return {
+                        "symbol": symbol,
+                        "leverage": setting.get("leverage", max_lev),
+                        "margin_mode": "isolated" if setting.get("isolated") else "cross",
+                        "status": "ok",
+                        "max_leverage": max_lev,
+                    }
+
+            # Not found = default settings (cross margin, max leverage)
+            return {
+                "symbol": symbol,
+                "leverage": max_lev,
+                "margin_mode": "cross",
+                "status": "ok",
+                "max_leverage": max_lev,
+            }
+        except Exception as e:
+            return {
+                "symbol": symbol,
+                "leverage": None,
+                "margin_mode": None,
+                "status": "error",
+                "message": str(e),
+            }
+
     async def update_leverage_rest(self, symbol: str, leverage: int, margin_mode: str) -> Dict[str, Any]:
         """Update leverage via REST API (concurrent requests)"""
         import asyncio

@@ -868,6 +868,48 @@ $('#signBtn').onclick = async () => {
 			except Exception:
 				return {"status": r.status, "text": txt}
 
+	async def get_leverage_info(self, symbol: str):
+		pac_symbol = self._symbol_to_pacifica(symbol)
+		meta = self._symbol_meta.get(pac_symbol, {})
+		max_lev = meta.get("max_leverage", 1)
+
+		url = f"{PACIFICA_BASE_URL}/account/settings"
+		s = self._session()
+		params = {"account": self.pacifica_public_key}
+
+		try:
+			async with s.get(url, params=params) as r:
+				r.raise_for_status()
+				data = await r.json()
+
+			settings_list = data.get("data") or []
+			for setting in settings_list:
+				if setting.get("symbol") == pac_symbol:
+					return {
+						"symbol": symbol,
+						"leverage": setting.get("leverage", max_lev),
+						"margin_mode": "isolated" if setting.get("isolated") else "cross",
+						"status": "ok",
+						"max_leverage": max_lev,
+					}
+
+			# Not found = default settings (cross margin, max leverage)
+			return {
+				"symbol": symbol,
+				"leverage": max_lev,
+				"margin_mode": "cross",
+				"status": "ok",
+				"max_leverage": max_lev,
+			}
+		except Exception as e:
+			return {
+				"symbol": symbol,
+				"leverage": None,
+				"margin_mode": None,
+				"status": "error",
+				"message": str(e),
+			}
+
 	async def create_order(
 		self,
 		symbol: str,

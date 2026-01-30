@@ -620,8 +620,12 @@ $('#signBtn').onclick = async () => {
 				data["margin_mode"] = actual_margin_mode.lower()
 			if forced_msg:
 				data["message"] = forced_msg
-			return data			
-			
+			return data
+
+	async def get_leverage_info(self, symbol: str):
+		symbol_ws = self._symbol_convert_for_ws(symbol)
+		return await super().get_leverage_info(symbol_ws)
+
 	async def get_position(self, symbol: str):
 		symbol_ws = self._symbol_convert_for_ws(symbol)
 		return await super().get_position(symbol_ws)
