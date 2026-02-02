@@ -155,8 +155,6 @@ class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
             "entry_price": pos['entry_price'],
             "unrealized_pnl": pos['unrealized_pnl'],
             "liquidation_price": pos.get('liquidation_price'),
-            "leverage": None,
-            "margin_mode": None,
             "raw_data": pos,
         }
     

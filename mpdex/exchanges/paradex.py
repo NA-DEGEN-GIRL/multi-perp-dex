@@ -210,8 +210,6 @@ class ParadexExchange(MultiPerpDexMixin, MultiPerpDex):
             "entry_price": float(position.get("average_entry_price", 0)),
             "unrealized_pnl": float(position.get("unrealized_pnl", 0)),
             "liquidation_price": float(position.get("liquidation_price")) if position.get("liquidation_price") else None,
-            "leverage": None,
-            "margin_mode": None,
             "raw_data": position,
         }
 

@@ -465,8 +465,6 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
             "entry_price": float(entry_price) if entry_price else None,
             "unrealized_pnl": round(float(unrealized_pnl), 2) if unrealized_pnl else None,
             "liquidation_price": None,
-            "leverage": None,
-            "margin_mode": None,
             "raw_data": pos,
         }
         
@@ -520,8 +518,6 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
             "entry_price": round(entry_price, 2),
             "unrealized_pnl": round(unrealized_pnl, 2),
             "liquidation_price": None,
-            "leverage": None,
-            "margin_mode": None,
             "raw_data": pos_data,
         }
 

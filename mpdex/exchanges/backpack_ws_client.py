@@ -179,8 +179,6 @@ class BackpackWSClient(BaseWSClient):
                 "entry_price": data.get("B"),  # Entry price
                 "unrealized_pnl": data.get("P"),  # PnL unrealized
                 "liquidation_price": data.get("L"),  # Liquidation price
-                "leverage": None,
-                "margin_mode": None,
                 "raw_data": data,
             }
 

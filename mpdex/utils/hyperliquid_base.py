@@ -529,14 +529,11 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
                 "entry_price": fnum(pos.get("entry_px")),
                 "unrealized_pnl": fnum(pos.get("upnl"), 0.0),
                 "liquidation_price": fnum(pos.get("liq_px"), None),
-                "leverage": pos.get("leverage"),
-                "margin_mode": pos.get("margin_mode"),
                 "raw_data": pos,
             }
 
         size_signed = fnum(pos.get("szi"), 0.0) or 0.0
         side = "long" if size_signed > 0 else "short" if size_signed < 0 else "flat"
-        leverage_info = pos.get("leverage") or {}
         return {
             "symbol": pos.get("coin"),
             "side": side,
@@ -544,8 +541,6 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             "entry_price": fnum(pos.get("entryPx")),
             "unrealized_pnl": fnum(pos.get("unrealizedPnl"), 0.0),
             "liquidation_price": fnum(pos.get("liquidationPx"), None),
-            "leverage": leverage_info.get("value"),
-            "margin_mode": leverage_info.get("type"),
             "raw_data": pos,
         }
 

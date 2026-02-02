@@ -238,8 +238,6 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
                     "entry_price": float(pos.open_price),
                     "unrealized_pnl": float(pos.unrealised_pnl),
                     "liquidation_price": float(pos.liquidation_price) if pos.liquidation_price else None,
-                    "leverage": None,
-                    "margin_mode": "cross",
                     "raw_data": pos,
                 }
 

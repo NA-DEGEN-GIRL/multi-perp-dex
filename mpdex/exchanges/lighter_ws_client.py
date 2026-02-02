@@ -832,8 +832,6 @@ class LighterWSClient(BaseWSClient):
             "entry_price": _f("avg_entry_price"),
             "unrealized_pnl": _f("unrealized_pnl"),
             "liquidation_price": _f("liquidation_price"),
-            "leverage": None,
-            "margin_mode": pos.get("margin_mode"),
             "raw_data": pos,
         }
 

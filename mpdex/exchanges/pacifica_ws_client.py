@@ -294,7 +294,6 @@ class PacificaWSClient(BaseWSClient):
                     continue
             except (ValueError, TypeError):
                 continue
-
             self._positions[symbol] = {
                 "symbol": symbol,
                 "side": item.get("d"),  # bid or ask

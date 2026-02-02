@@ -475,11 +475,13 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         Get position (WS first, REST fallback)
         """
         symbol = symbol.upper()
+        
         if self.ws_client:
             try:
                 return await self.get_position_ws(symbol)
             except Exception as e:
                 print(f"[pacifica] get_position WS failed, falling back to REST: {e}")
+        
         return await self.get_position_rest(symbol)
 
     async def get_position_ws(self, symbol: str, timeout: float = 5.0) -> Optional[Dict[str, Any]]:
@@ -516,8 +518,6 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
             "entry_price": pos.get("entry_price"),
             "unrealized_pnl": None,
             "liquidation_price": pos.get("liquidation_price"),
-            "leverage": None,
-            "margin_mode": "isolated" if is_isolated else "cross",
             "raw_data": pos,
         }
 
@@ -537,7 +537,6 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         data = data.get('data', {})
         for pos in data:
             if pos.get("symbol") == symbol:
-                is_isolated = pos.get("is_isolated", False)
                 return {
                     "symbol": symbol,
                     "side": "long" if pos.get("side") == "bid" else "short",
@@ -545,8 +544,6 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
                     "entry_price": pos.get("entry_price"),
                     "unrealized_pnl": None,
                     "liquidation_price": pos.get("liquidation_price"),
-                    "leverage": None,
-                    "margin_mode": "isolated" if is_isolated else "cross",
                     "raw_data": pos,
                 }
         return None

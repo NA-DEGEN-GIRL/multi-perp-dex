@@ -297,8 +297,6 @@ class ParadexWSClient(BaseWSClient):
                 "entry_price": self._fnum(data.get("average_entry_price")),
                 "unrealized_pnl": self._fnum(data.get("unrealized_pnl")),
                 "liquidation_price": self._fnum(data.get("liquidation_price")),
-                "leverage": data.get("leverage"),
-                "margin_mode": None,
                 "raw_data": data,
             }
 

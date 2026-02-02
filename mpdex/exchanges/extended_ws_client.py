@@ -148,8 +148,6 @@ class ExtendedWSClient(BaseWSClient):
                     "entry_price": float(pos.get("openPrice", 0)),
                     "unrealized_pnl": float(pos.get("unrealisedPnl", 0)),
                     "liquidation_price": float(pos.get("liquidationPrice") or 0) or None,
-                    "leverage": float(pos.get("leverage", 1)) if pos.get("leverage") else None,
-                    "margin_mode": "cross",
                     "raw_data": pos,
                 }
 

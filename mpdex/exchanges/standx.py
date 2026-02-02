@@ -562,8 +562,6 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             "entry_price": pos.get("entry_price", "0"),
             "unrealized_pnl": pos.get("upnl", "0"),
             "liquidation_price": pos.get("liq_price", "0"),
-            "leverage": pos.get("leverage", "1"),
-            "margin_mode": pos.get("margin_mode", "cross"),
             "raw_data": pos,
         }
 

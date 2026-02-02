@@ -348,8 +348,6 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
             "entry_price": position['entryPrice'],
             "unrealized_pnl": position['pnlRealized'],
             "liquidation_price": position.get('liquidationPrice'),
-            "leverage": None,
-            "margin_mode": None,
             "raw_data": position,
         }
         

@@ -22,7 +22,7 @@ async def main():
 
     position = await pacifica.get_position(symbol)
     print(position)
-
+    return
     # update leverage test
     res = await pacifica.update_leverage(symbol, 10, "isolated")
     print(res)

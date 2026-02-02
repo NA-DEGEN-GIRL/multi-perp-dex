@@ -173,8 +173,6 @@ def _extract_position_for_coin(positions, coin: str) -> Optional[dict]:
                 "entry_price": _fnum(info.get("avg_entry_price")),
                 "unrealized_pnl": p.get("upnl", 0),
                 "liquidation_price": None,
-                "leverage": None,
-                "margin_mode": None,
                 "raw_data": p,
             }
         except Exception:

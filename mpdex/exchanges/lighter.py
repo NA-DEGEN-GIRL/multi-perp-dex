@@ -432,8 +432,6 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
             "entry_price": pos['avg_entry_price'],
             "unrealized_pnl": pos['unrealized_pnl'],
             "liquidation_price": pos.get('liquidation_price'),
-            "leverage": None,
-            "margin_mode": None,
             "raw_data": pos,
         }
         
