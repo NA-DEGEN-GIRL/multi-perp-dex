@@ -194,20 +194,25 @@ class ParadexExchange(MultiPerpDexMixin, MultiPerpDex):
         if not positions:
             return None
 
-        for position in positions:
-            market = position.get('market')
-            if market == symbol:
+        position = None
+        for pos in positions:
+            if pos.get('market') == symbol:
+                position = pos
                 break
 
-        if position.get("size") == '0' or position.get("size") == 0:
+        if not position or position.get("size") == '0' or position.get("size") == 0:
             return None
 
         return {
+            "symbol": symbol,
+            "side": position.get("side", "").lower(),
+            "size": str(position.get("size", "0")).replace('-', ''),
             "entry_price": float(position.get("average_entry_price", 0)),
             "unrealized_pnl": float(position.get("unrealized_pnl", 0)),
-            "side": position.get("side", "").lower(),
-            "size": position.get("size").replace('-', ''),
-            "raw_data": position
+            "liquidation_price": float(position.get("liquidation_price")) if position.get("liquidation_price") else None,
+            "leverage": None,
+            "margin_mode": None,
+            "raw_data": position,
         }
 
     # ==================== Mark Price ====================

@@ -507,17 +507,18 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
 
         side_raw = pos.get("side", "")
         side = "long" if side_raw == "bid" else "short"
+        is_isolated = pos.get("is_isolated", False)
 
         return {
             "symbol": pos.get("symbol"),
             "side": side,
-            "entry_price": pos.get("entry_price"),
             "size": amount,
+            "entry_price": pos.get("entry_price"),
+            "unrealized_pnl": None,
             "liquidation_price": pos.get("liquidation_price"),
-            "margin": pos.get("margin"),
-            "funding_fee": pos.get("funding_fee"),
-            "unrealized_pnl":None, # not supported, calcuate using price, and entry_price
-            "raw_data":pos
+            "leverage": None,
+            "margin_mode": "isolated" if is_isolated else "cross",
+            "raw_data": pos,
         }
 
     async def get_position_rest(self, symbol):
@@ -527,20 +528,26 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         url = f"{BASE_URL}/positions"
 
         s = self._session()
-        params = {"account":self.public_key}
+        params = {"account": self.public_key}
 
         async with s.get(url, params=params) as r:
             r.raise_for_status()
             data = await r.json()
 
-        data = data.get('data',{})
+        data = data.get('data', {})
         for pos in data:
             if pos.get("symbol") == symbol:
+                is_isolated = pos.get("is_isolated", False)
                 return {
                     "symbol": symbol,
-                    "side": "long" if pos.get("side")=="bid" else "short",
-                    "price": pos.get("entry_price"),
-                    "size":pos.get("amount"),
+                    "side": "long" if pos.get("side") == "bid" else "short",
+                    "size": pos.get("amount"),
+                    "entry_price": pos.get("entry_price"),
+                    "unrealized_pnl": None,
+                    "liquidation_price": pos.get("liquidation_price"),
+                    "leverage": None,
+                    "margin_mode": "isolated" if is_isolated else "cross",
+                    "raw_data": pos,
                 }
         return None
     

@@ -145,12 +145,12 @@ class ExtendedWSClient(BaseWSClient):
                     "symbol": market,
                     "side": "long" if side_raw.upper() == "LONG" else "short",
                     "size": size,
-                    "amount": size,
                     "entry_price": float(pos.get("openPrice", 0)),
-                    "mark_price": float(pos.get("markPrice", 0)),
                     "unrealized_pnl": float(pos.get("unrealisedPnl", 0)),
-                    "liquidation_price": float(pos.get("liquidationPrice") or 0),
-                    "leverage": float(pos.get("leverage", 1)),
+                    "liquidation_price": float(pos.get("liquidationPrice") or 0) or None,
+                    "leverage": float(pos.get("leverage", 1)) if pos.get("leverage") else None,
+                    "margin_mode": "cross",
+                    "raw_data": pos,
                 }
 
         if not self._position_event.is_set():

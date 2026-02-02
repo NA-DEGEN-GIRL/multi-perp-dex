@@ -177,11 +177,11 @@ class BackpackWSClient(BaseWSClient):
                 "side": "long" if net_qty > 0 else "short" if net_qty < 0 else None,
                 "size": str(abs(net_qty)),
                 "entry_price": data.get("B"),  # Entry price
-                "mark_price": data.get("M"),
                 "unrealized_pnl": data.get("P"),  # PnL unrealized
-                "realized_pnl": data.get("p"),  # PnL realized
-                "position_id": data.get("i"),
-                "time": int(time.time() * 1000),
+                "liquidation_price": data.get("L"),  # Liquidation price
+                "leverage": None,
+                "margin_mode": None,
+                "raw_data": data,
             }
 
         self._position_event.set()

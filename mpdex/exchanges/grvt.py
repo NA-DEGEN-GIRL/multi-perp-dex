@@ -146,16 +146,18 @@ class GrvtExchange(MultiPerpDexMixin, MultiPerpDex):
         return self.parse_order(res)
     
     def parse_position(self, pos):
-        entry_price = pos['entry_price']
-        unrealized_pnl = pos['unrealized_pnl']
         side = 'short' if '-' in pos['size'] else 'long'
-        size = pos['size'].replace('-','')
+        size = pos['size'].replace('-', '')
         return {
-            "entry_price": entry_price,
-            "unrealized_pnl": unrealized_pnl,
+            "symbol": pos.get('instrument'),
             "side": side,
             "size": size,
-            "raw_data":pos
+            "entry_price": pos['entry_price'],
+            "unrealized_pnl": pos['unrealized_pnl'],
+            "liquidation_price": pos.get('liquidation_price'),
+            "leverage": None,
+            "margin_mode": None,
+            "raw_data": pos,
         }
     
     async def get_orderbook(self, symbol) -> Optional[Dict[str, Any]]:

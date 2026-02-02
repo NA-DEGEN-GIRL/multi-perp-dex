@@ -421,19 +421,20 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
                 "tx_hash": resp.tx_hash
             }
     
-    def parse_position(self, pos):
-        entry_price = pos['avg_entry_price']
-        unrealized_pnl = pos['unrealized_pnl']
-        side = 'short' if pos['sign'] == -1 else 'long'
+    def parse_position(self, pos, symbol: str = None):
         size = pos['position']
         if float(size) == 0:
             return None
         return {
-            "entry_price": entry_price,
-            "unrealized_pnl": unrealized_pnl,
-            "side": side,
+            "symbol": symbol or pos.get("market"),
+            "side": 'short' if pos['sign'] == -1 else 'long',
             "size": size,
-            "raw_data":pos
+            "entry_price": pos['avg_entry_price'],
+            "unrealized_pnl": pos['unrealized_pnl'],
+            "liquidation_price": pos.get('liquidation_price'),
+            "leverage": None,
+            "margin_mode": None,
+            "raw_data": pos,
         }
         
     async def get_position(self, symbol, *, ws_wait_timeout: float = 0.5):

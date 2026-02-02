@@ -334,24 +334,23 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
                         return self.parse_position(pos)
                 return None
             
-    def parse_position(self,position):
+    def parse_position(self, position):
         if not position:
             return None
-        #print(position)
         size = position['netQuantity']
         side = 'short' if '-' in size else 'long'
-        size = size.replace('-','')
-        entry_price = position['entryPrice']
-        # Not exactly. Our system has real timesettlement. 
-        # # That quantity is the amount that's been extracted out of the position and settled into physical USDC.
-        unrealized_pnl = position['pnlRealized'] # here is different from other exchanges
-        
+        size = size.replace('-', '')
+        # Note: pnlRealized is used here due to real-time settlement system
         return {
-            "entry_price": entry_price,
-            "unrealized_pnl": unrealized_pnl,
+            "symbol": position.get('symbol'),
             "side": side,
             "size": size,
-            "raw_data":position
+            "entry_price": position['entryPrice'],
+            "unrealized_pnl": position['pnlRealized'],
+            "liquidation_price": position.get('liquidationPrice'),
+            "leverage": None,
+            "margin_mode": None,
+            "raw_data": position,
         }
         
     async def get_collateral(self):

@@ -827,16 +827,14 @@ class LighterWSClient(BaseWSClient):
 
         return {
             "symbol": pos.get("symbol", ""),
-            "size": abs(size_val),
             "side": side,
+            "size": abs(size_val),
             "entry_price": _f("avg_entry_price"),
-            "position_value": _f("position_value"),
             "unrealized_pnl": _f("unrealized_pnl"),
-            "realized_pnl": _f("realized_pnl"),
             "liquidation_price": _f("liquidation_price"),
+            "leverage": None,
             "margin_mode": pos.get("margin_mode"),
-            "allocated_margin": _f("allocated_margin"),
-            "initial_margin_fraction": _f("initial_margin_fraction"),
+            "raw_data": pos,
         }
 
     def get_assets(self) -> Dict[str, Dict[str, float]]:

@@ -217,11 +217,15 @@ class GrvtWSClient:
             else:
                 side = "short" if "-" in size else "long"
                 self._positions[instrument] = {
-                    "entry_price": entry_price,
-                    "unrealized_pnl": unrealized_pnl,
+                    "symbol": instrument,
                     "side": side,
                     "size": str(size_val),
-                    "raw_data": feed
+                    "entry_price": entry_price,
+                    "unrealized_pnl": unrealized_pnl,
+                    "liquidation_price": feed.get("liquidation_price"),
+                    "leverage": None,
+                    "margin_mode": None,
+                    "raw_data": feed,
                 }
             self._position_ts[instrument] = time.time()
 

@@ -291,15 +291,15 @@ class ParadexWSClient(BaseWSClient):
             self._positions.pop(market, None)
         else:
             self._positions[market] = {
-                "market": market,
+                "symbol": market,
                 "side": side,
                 "size": str(abs(size)) if size else "0",
                 "entry_price": self._fnum(data.get("average_entry_price")),
                 "unrealized_pnl": self._fnum(data.get("unrealized_pnl")),
                 "liquidation_price": self._fnum(data.get("liquidation_price")),
                 "leverage": data.get("leverage"),
-                "status": data.get("status"),
-                "raw": data,
+                "margin_mode": None,
+                "raw_data": data,
             }
 
         if not self._positions_ready.is_set():

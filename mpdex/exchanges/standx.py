@@ -560,13 +560,11 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             "side": side,
             "size": size,
             "entry_price": pos.get("entry_price", "0"),
-            "mark_price": pos.get("mark_price", "0"),
             "unrealized_pnl": pos.get("upnl", "0"),
-            "realized_pnl": pos.get("realized_pnl", "0"),
+            "liquidation_price": pos.get("liq_price", "0"),
             "leverage": pos.get("leverage", "1"),
             "margin_mode": pos.get("margin_mode", "cross"),
-            "liq_price": pos.get("liq_price", "0"),
-            "raw_data":pos
+            "raw_data": pos,
         }
 
     # ----------------------------

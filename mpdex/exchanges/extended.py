@@ -235,11 +235,12 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
                     "symbol": symbol,
                     "side": "long" if str(pos.side).upper() == "LONG" else "short",
                     "size": size,
-                    "amount": size,
                     "entry_price": float(pos.open_price),
-                    "mark_price": float(pos.mark_price),
                     "unrealized_pnl": float(pos.unrealised_pnl),
-                    "liquidation_price": float(pos.liquidation_price) if pos.liquidation_price else 0,
+                    "liquidation_price": float(pos.liquidation_price) if pos.liquidation_price else None,
+                    "leverage": None,
+                    "margin_mode": "cross",
+                    "raw_data": pos,
                 }
 
         return None

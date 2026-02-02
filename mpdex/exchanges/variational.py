@@ -166,14 +166,16 @@ def _extract_position_for_coin(positions, coin: str) -> Optional[dict]:
                 continue
             qty = _fnum(info.get("qty"))
             side = "long" if (qty or 0) > 0 else ("short" if (qty or 0) < 0 else "flat")
-            unrealized_pnl = p.get("upnl",0)
             return {
-                "coin": inst.get("underlying"),
+                "symbol": inst.get("underlying"),
                 "side": side,
                 "size": str(abs(qty)) if qty is not None else None,
                 "entry_price": _fnum(info.get("avg_entry_price")),
-                "unrealized_pnl": unrealized_pnl,
-                "raw_data":p
+                "unrealized_pnl": p.get("upnl", 0),
+                "liquidation_price": None,
+                "leverage": None,
+                "margin_mode": None,
+                "raw_data": p,
             }
         except Exception:
             continue

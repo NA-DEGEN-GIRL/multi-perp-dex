@@ -521,22 +521,33 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         if "entry_px" in pos or "size" in pos:
             size = fnum(pos.get("size"), 0.0) or 0.0
             side = pos.get("side") or ("long" if size > 0 else "short" if size < 0 else "flat")
-            
-            # ws 추가 정보
-            leverage_type = pos.get("lev_type") or None
-            leverage_value = pos.get("lev_value") or None
-            liquidation_price = fnum(pos.get("liq_px"), None)
-            
-            return {"entry_price": fnum(pos.get("entry_px")), "unrealized_pnl": fnum(pos.get("upnl"), 0.0), "side": side, "size": abs(size), 
-                    "leverage_type": leverage_type, "leverage_value": leverage_value, "liquidation_price": liquidation_price}
-        
+
+            return {
+                "symbol": pos.get("coin"),
+                "side": side,
+                "size": abs(size),
+                "entry_price": fnum(pos.get("entry_px")),
+                "unrealized_pnl": fnum(pos.get("upnl"), 0.0),
+                "liquidation_price": fnum(pos.get("liq_px"), None),
+                "leverage": pos.get("lev_value"),
+                "margin_mode": pos.get("lev_type"),
+                "raw_data": pos,
+            }
+
         size_signed = fnum(pos.get("szi"), 0.0) or 0.0
         side = "long" if size_signed > 0 else "short" if size_signed < 0 else "flat"
-        liquidation_price = fnum(pos.get("liquidationPx"), None)
-        return {"entry_price": fnum(pos.get("entryPx")), "unrealized_pnl": fnum(pos.get("unrealizedPnl"), 0.0), "side": side, "size": abs(size_signed), 
-                "leverage_type": (pos.get("leverage") or {}).get("type"),
-                "leverage_value": (pos.get("leverage") or {}).get("value"),
-                "liquidation_price": liquidation_price}
+        leverage_info = pos.get("leverage") or {}
+        return {
+            "symbol": pos.get("coin"),
+            "side": side,
+            "size": abs(size_signed),
+            "entry_price": fnum(pos.get("entryPx")),
+            "unrealized_pnl": fnum(pos.get("unrealizedPnl"), 0.0),
+            "liquidation_price": fnum(pos.get("liquidationPx"), None),
+            "leverage": leverage_info.get("value"),
+            "margin_mode": leverage_info.get("type"),
+            "raw_data": pos,
+        }
 
     async def get_position(self, symbol: str):
         """

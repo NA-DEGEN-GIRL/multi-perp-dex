@@ -434,33 +434,40 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
             ) as resp:
                 return await resp.json()
 
-    def parse_position(self, position_list,position_asset_list, symbol):
+    def parse_position(self, position_list, position_asset_list, symbol):
         contract_id = self.market_info[symbol]['contractId']
-        
+
         size = 0
         pos = None
+        side = None
+        entry_price = None
+        unrealized_pnl = None
+
         for position in position_list:
             if position['contractId'] == contract_id:
                 pos = position
-                #print(position)
                 size = position['openSize']
                 side = 'short' if '-' in size else 'long'
-                size = size.replace('-','')
-                
+                size = size.replace('-', '')
+
         for position in position_asset_list:
             if position['contractId'] == contract_id:
                 entry_price = position['avgEntryPrice']
                 unrealized_pnl = position['unrealizePnl']
-        
+
         if size == 0:
-            return None        
-        
+            return None
+
         return {
-            "entry_price": float(entry_price),
-            "unrealized_pnl": round(float(unrealized_pnl),2),
+            "symbol": symbol,
             "side": side,
             "size": size,
-            "raw_data":pos
+            "entry_price": float(entry_price) if entry_price else None,
+            "unrealized_pnl": round(float(unrealized_pnl), 2) if unrealized_pnl else None,
+            "liquidation_price": None,
+            "leverage": None,
+            "margin_mode": None,
+            "raw_data": pos,
         }
         
     
@@ -507,11 +514,15 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
         unrealized_pnl = 0
 
         return {
-            "entry_price": round(entry_price, 2),
-            "unrealized_pnl": round(unrealized_pnl, 2),
+            "symbol": symbol,
             "side": side,
             "size": str(size),
-            "raw_data": pos_data
+            "entry_price": round(entry_price, 2),
+            "unrealized_pnl": round(unrealized_pnl, 2),
+            "liquidation_price": None,
+            "leverage": None,
+            "margin_mode": None,
+            "raw_data": pos_data,
         }
 
     async def _get_position_rest(self, symbol):

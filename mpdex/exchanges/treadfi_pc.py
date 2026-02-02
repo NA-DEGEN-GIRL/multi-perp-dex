@@ -736,13 +736,18 @@ $('#signBtn').onclick = async () => {
 
 		side_raw = pos.get("side", "")
 		side = "long" if side_raw == "bid" else "short"
+		is_isolated = pos.get("is_isolated", False)
 
 		return {
 			"symbol": pos.get("symbol"),
 			"side": side,
-			"entry_price": pos.get("entry_price"),
 			"size": amount,
+			"entry_price": pos.get("entry_price"),
+			"unrealized_pnl": None,
 			"liquidation_price": pos.get("liquidation_price"),
+			"leverage": None,
+			"margin_mode": "isolated" if is_isolated else "cross",
+			"raw_data": pos,
 		}
 
 	async def get_position_rest(self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -760,12 +765,17 @@ $('#signBtn').onclick = async () => {
 		data = data.get('data', {})
 		for pos in data:
 			if pos.get("symbol") == symbol:
+				is_isolated = pos.get("is_isolated", False)
 				return {
 					"symbol": symbol,
 					"side": "long" if pos.get("side") == "bid" else "short",
-					"entry_price": pos.get("entry_price"),
 					"size": pos.get("amount"),
-					"raw_data":pos
+					"entry_price": pos.get("entry_price"),
+					"unrealized_pnl": None,
+					"liquidation_price": pos.get("liquidation_price"),
+					"leverage": None,
+					"margin_mode": "isolated" if is_isolated else "cross",
+					"raw_data": pos,
 				}
 		return None
 
