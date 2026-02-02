@@ -187,7 +187,7 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         q = value.quantize(step)  # 소수자릿수 강제
         return format(q, "f")     # '1.2300' 유지
 
-    def _get_meta(self, symbol: str) -> Dict[str, Any]:  # [ADDED]
+    def _get_symbol_meta(self, symbol: str) -> Dict[str, Any]:  # [ADDED]
         sym = str(symbol).upper()
         meta = self._symbol_meta.get(sym)
         if not meta:
@@ -208,7 +208,7 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         - 기본 반올림: HALF_UP (일반적인 가격 반올림)
         - 필요 시 rounding=ROUND_DOWN/ROUND_UP 등으로 조정 가능
         """
-        meta = self._get_meta(symbol)
+        meta = self._get_symbol_meta(symbol)
         step = self._dec(meta["tick_size"])
         p = self._dec(price)
         # step 배수로 반올림
@@ -232,7 +232,7 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         lot_size 배수로 수량을 반올림하여 문자열로 반환.
         - 기본은 DOWN(절삭): 과다 수량 전송 방지 목적
         """
-        meta = self._get_meta(symbol)
+        meta = self._get_symbol_meta(symbol)
         step = self._dec(meta["lot_size"])
         a = self._dec(amount)
         if step <= 0:
@@ -254,7 +254,7 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         if self._leverage_updated.get(symbol):
             return {"status": "ok", "message": "already updated"}
 
-        meta = self._get_meta(symbol)
+        meta = self._get_symbol_meta(symbol)
         max_lev = meta.get("max_leverage", 1)
         lev_value = int(leverage or max_lev)
         actual_margin_mode = (margin_mode or "cross").lower()
@@ -273,7 +273,7 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         Note: If no custom settings, returns default (cross margin, max leverage).
         """
         symbol = symbol.upper()
-        meta = self._get_meta(symbol)
+        meta = self._get_symbol_meta(symbol)
         max_lev = meta.get("max_leverage", 1)
 
         url = f"{BASE_URL}/account/settings"

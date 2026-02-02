@@ -134,6 +134,7 @@ class MultiPerpDexMixin:
             "leverage": None,
             "margin_mode": None,
             "status": "not_implemented",
+            "max_leverage": None,
         }
 
     async def get_available_symbols(self):

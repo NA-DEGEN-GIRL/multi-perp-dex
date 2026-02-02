@@ -594,7 +594,7 @@ $('#signBtn').onclick = async () => {
 		q = value.quantize(step)
 		return format(q, "f")
 
-	def _get_meta(self, symbol: str) -> Dict[str, Any]:
+	def _get_symbol_meta(self, symbol: str) -> Dict[str, Any]:
 		sym = self._symbol_to_pacifica(symbol)
 		meta = self._symbol_meta.get(sym)
 		if not meta:
@@ -609,7 +609,7 @@ $('#signBtn').onclick = async () => {
 		return meta
 
 	def _adjust_price_tick(self, symbol: str, price, *, rounding=ROUND_HALF_UP) -> str:
-		meta = self._get_meta(symbol)
+		meta = self._get_symbol_meta(symbol)
 		step = self._dec(meta["tick_size"])
 		p = self._dec(price)
 		units = (p / step).to_integral_value(rounding=rounding)
@@ -617,7 +617,7 @@ $('#signBtn').onclick = async () => {
 		return self._format_with_step(adjusted, step)
 
 	def _adjust_amount_lot(self, symbol: str, amount, *, rounding=ROUND_DOWN) -> str:
-		meta = self._get_meta(symbol)
+		meta = self._get_symbol_meta(symbol)
 		step = self._dec(meta["lot_size"])
 		a = self._dec(amount)
 		if step <= 0:

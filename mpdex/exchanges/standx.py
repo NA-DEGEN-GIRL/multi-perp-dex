@@ -77,7 +77,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         )
 
         # Symbol info cache
-        self._symbol_info: Dict[str, Dict] = {}
+        self._symbol_meta: Dict[str, Dict] = {}
 
         # Collateral symbol
         self.COLLATERAL_SYMBOL = "DUSD"
@@ -337,15 +337,15 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         self.available_symbols["perp"] = []
 
         # Get all symbol info
-        symbols = await self._query_symbol_info()
+        symbols = await self._query_symbol_meta()
         for info in symbols:
             symbol = info.get("symbol")
             # status == "trading" means the symbol is active
             if symbol and info.get("status") == "trading":
                 self.available_symbols["perp"].append(symbol)
-                self._symbol_info[symbol] = info
+                self._symbol_meta[symbol] = info
 
-    async def _query_symbol_info(self, symbol: Optional[str] = None) -> List[Dict]:
+    async def _query_symbol_meta(self, symbol: Optional[str] = None) -> List[Dict]:
         """GET /api/query_symbol_info"""
         url = f"{STANDX_PERPS_BASE}/api/query_symbol_info"
         params = {}
@@ -358,11 +358,11 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
                     raise RuntimeError(f"query_symbol_info failed: {resp.status} {text}")
                 return await resp.json()
 
-    def _get_symbol_info(self, symbol: str) -> Dict:
+    def _get_symbol_meta(self, symbol: str) -> Dict:
         """Get cached symbol info"""
-        if symbol not in self._symbol_info:
+        if symbol not in self._symbol_meta:
             raise ValueError(f"Unknown symbol: {symbol}")
-        return self._symbol_info[symbol]
+        return self._symbol_meta[symbol]
 
     # ----------------------------
     # Price
@@ -589,7 +589,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             order_type = "limit"
 
         # Get symbol info for formatting
-        info = self._get_symbol_info(symbol)
+        info = self._get_symbol_meta(symbol)
         qty_decimals = info.get("qty_tick_decimals", 3)
         price_decimals = info.get("price_tick_decimals", 2)
         min_order_qty = float(info.get("min_order_qty", 0))
@@ -814,10 +814,10 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         """
         # Get symbol info for max_leverage
         try:
-            info = self._get_symbol_info(symbol)
+            info = self._get_symbol_meta(symbol)
         except ValueError:
             await self._update_available_symbols()
-            info = self._get_symbol_info(symbol)
+            info = self._get_symbol_meta(symbol)
 
         max_leverage = int(info.get("max_leverage", 20))
         target_leverage = leverage if leverage is not None else max_leverage
@@ -863,7 +863,27 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
         """GET /api/query_position_config"""
         url = f"{STANDX_PERPS_BASE}/api/query_position_config"
         params = {"symbol": symbol}
-        return await self._auth_get(url, params=params)
+        try:
+            data = await self._auth_get(url, params=params)
+            # data: {'leverage': '40', 'margin_mode': 'cross', 'symbol': 'BTC-USD'}
+            info = self._get_symbol_meta(symbol)
+            max_lev = int(info.get("max_leverage", 20))
+            return {
+                "symbol": data.get("symbol", symbol),
+                "leverage": int(data.get("leverage", 1)),
+                "margin_mode": data.get("margin_mode", "cross"),
+                "status": "ok",
+                "max_leverage": max_lev,
+            }
+        except Exception as e:
+            return {
+                "symbol": symbol,
+                "leverage": None,
+                "margin_mode": None,
+                "status": "error",
+                "max_leverage": None,
+                "message": str(e),
+            }
 
     # ----------------------------
     # Market Data

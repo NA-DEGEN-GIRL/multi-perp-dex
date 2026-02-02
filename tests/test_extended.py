@@ -63,7 +63,7 @@ async def main():
     except Exception as e:
         print(f"ERROR: Failed to create exchange: {e}")
         return
-
+    
     symbol = symbol_create("extended", COIN)
     print(f"Symbol: {symbol}\n")
 

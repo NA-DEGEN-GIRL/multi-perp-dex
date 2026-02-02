@@ -69,6 +69,8 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
         self.available_symbols = {}
         # Market info cache (symbol -> MarketModel with trading_config for precision)
         self._markets: Dict[str, Any] = {}
+        # Symbol meta cache (extracted key trading parameters)
+        self._symbol_meta: Dict[str, Dict[str, Any]] = {}
 
     def _import_sdk(self):
         """Lazy import SDK to avoid import errors when SDK not installed"""
@@ -110,6 +112,18 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
     def get_perp_quote(self, symbol):
         return 'USD'
 
+    def _get_symbol_meta(self, symbol: str) -> Dict[str, Any]:
+        """Get cached symbol meta, return defaults if not found"""
+        meta = self._symbol_meta.get(symbol)
+        if not meta:
+            return {
+                "tick_size": "0.01",
+                "lot_size": "0.01",
+                "min_order_size": "0.1",
+                "max_leverage": 1,
+            }
+        return meta
+
     async def _load_markets(self):
         """Load available markets from API (with trading_config for precision)"""
         try:
@@ -117,9 +131,25 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
             markets = response.data or []
             perp_symbols = []
             for market in markets:
-                perp_symbols.append(market.name)
-                # Cache full market info for precision handling
-                self._markets[market.name] = market
+                name = market.name
+                perp_symbols.append(name)
+                # Cache full market info
+                self._markets[name] = market
+                # Extract key trading parameters to _symbol_meta
+                tc = market.trading_config
+                self._symbol_meta[name] = {
+                    "asset_precision": market.asset_precision,
+                    "collateral_precision": market.collateral_asset_precision,
+                    "active": market.active,
+                    "min_order_size": str(tc.min_order_size),
+                    "lot_size": str(tc.min_order_size_change),
+                    "tick_size": str(tc.min_price_change),
+                    "max_leverage": int(tc.max_leverage),
+                    "max_market_order_value": str(tc.max_market_order_value),
+                    "max_limit_order_value": str(tc.max_limit_order_value),
+                    "max_position_value": str(tc.max_position_value),
+                    "max_num_orders": tc.max_num_orders,
+                }
             self.available_symbols = {"perp": perp_symbols}
         except Exception as e:
             print(f"[Extended] Failed to load markets: {e}")
@@ -388,7 +418,9 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
 
     async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None) -> Dict[str, Any]:
         """Update leverage for symbol (only cross margin supported)"""
-        lev = leverage if leverage is not None else 1
+        meta = self._get_symbol_meta(symbol)
+        max_lev = meta.get("max_leverage", 1)
+        lev = leverage if leverage is not None else max_lev
         requested_mode = (margin_mode or "cross").lower()
 
         message = None
@@ -402,6 +434,7 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
             "leverage": lev,
             "margin_mode": "cross",
             "status": "ok",
+            "max_leverage": max_lev,
             "result": res,
         }
         if message:
@@ -410,6 +443,8 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
 
     async def get_leverage_info(self, symbol: str) -> Dict[str, Any]:
         """Get leverage info for symbol (only cross margin supported)"""
+        meta = self._get_symbol_meta(symbol)
+        max_lev = meta.get("max_leverage", 1)
         try:
             res = await self._client.account.get_leverage(market_names=[symbol])
             # res: status='OK' data=[AccountLeverage(market='BTC-USD', leverage=Decimal('50'))]
@@ -424,6 +459,7 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
                 "leverage": leverage,
                 "margin_mode": "cross",
                 "status": "ok",
+                "max_leverage": max_lev,
             }
         except Exception as e:
             return {
@@ -431,6 +467,7 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
                 "leverage": None,
                 "margin_mode": None,
                 "status": "error",
+                "max_leverage": max_lev,
                 "message": str(e),
             }
 
