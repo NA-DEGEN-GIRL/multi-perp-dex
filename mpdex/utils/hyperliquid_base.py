@@ -529,8 +529,8 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
                 "entry_price": fnum(pos.get("entry_px")),
                 "unrealized_pnl": fnum(pos.get("upnl"), 0.0),
                 "liquidation_price": fnum(pos.get("liq_px"), None),
-                "leverage": pos.get("lev_value"),
-                "margin_mode": pos.get("lev_type"),
+                "leverage": pos.get("leverage"),
+                "margin_mode": pos.get("margin_mode"),
                 "raw_data": pos,
             }
 
@@ -562,6 +562,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
                 return pos
         except Exception as e:
             print(f"hyperliquid: get_position falling back to rest api / symbol {symbol} / error in ws {e}")
+            
         return await self.get_position_rest(symbol)
     
     async def get_position_raw_ws(self, symbol: str, timeout: float = 2.0):
