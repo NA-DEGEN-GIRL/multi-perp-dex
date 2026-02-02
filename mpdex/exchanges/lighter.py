@@ -444,10 +444,12 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
                 if pos is not None:
                     # WS 포맷 → 기존 포맷으로 변환
                     return {
+                        "symbol": symbol,
                         "entry_price": pos.get("entry_price"),
                         "unrealized_pnl": pos.get("unrealized_pnl"),
                         "side": pos.get("side"),
                         "size": pos.get("size"),
+                        "liquidation_price": pos.get("liquidation_price"),
                     }
                 # WS에 해당 심볼 포지션 없음 = 포지션 없음
                 return None
@@ -460,10 +462,12 @@ class LighterExchange(MultiPerpDexMixin, MultiPerpDex):
                         pos = self._ws_client.get_position(symbol)
                         if pos is not None:
                             return {
+                                "symbol": symbol,
                                 "entry_price": pos.get("entry_price"),
                                 "unrealized_pnl": pos.get("unrealized_pnl"),
                                 "side": pos.get("side"),
                                 "size": pos.get("size"),
+                                "liquidation_price": pos.get("liquidation_price"),
                             }
                         return None
                 except Exception as e:

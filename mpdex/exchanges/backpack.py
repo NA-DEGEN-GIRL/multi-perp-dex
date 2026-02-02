@@ -308,6 +308,13 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
             if pos is not None:
                 return pos
 
+            # Wait for position data to arrive
+            ready = await self._ws_client.wait_position_ready(timeout=3.0)
+            if ready:
+                pos = self._ws_client.get_position(symbol)
+                if pos is not None:
+                    return pos
+
         # Fallback to REST
         return await self.get_position_rest(symbol)
 
@@ -347,7 +354,7 @@ class BackpackExchange(MultiPerpDexMixin, MultiPerpDex):
             "size": size,
             "entry_price": position['entryPrice'],
             "unrealized_pnl": position['pnlRealized'],
-            "liquidation_price": position.get('liquidationPrice'),
+            "liquidation_price": position.get('estLiquidationPrice',None),
             "raw_data": position,
         }
         

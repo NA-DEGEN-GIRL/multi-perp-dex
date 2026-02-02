@@ -178,7 +178,6 @@ class BackpackWSClient(BaseWSClient):
                 "size": str(abs(net_qty)),
                 "entry_price": data.get("B"),  # Entry price
                 "unrealized_pnl": data.get("P"),  # PnL unrealized
-                "liquidation_price": data.get("L"),  # Liquidation price
                 "raw_data": data,
             }
 

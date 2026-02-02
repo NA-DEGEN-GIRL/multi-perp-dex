@@ -481,7 +481,7 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
                 return await self.get_position_ws(symbol)
             except Exception as e:
                 print(f"[pacifica] get_position WS failed, falling back to REST: {e}")
-        
+
         return await self.get_position_rest(symbol)
 
     async def get_position_ws(self, symbol: str, timeout: float = 5.0) -> Optional[Dict[str, Any]]:
