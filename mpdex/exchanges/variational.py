@@ -172,7 +172,7 @@ def _extract_position_for_coin(positions, coin: str) -> Optional[dict]:
                 "size": str(abs(qty)) if qty is not None else None,
                 "entry_price": _fnum(info.get("avg_entry_price")),
                 "unrealized_pnl": p.get("upnl", 0),
-                "liquidation_price": None,
+                "liquidation_price": p.get("estimated_liquidation_price", None),
                 "raw_data": p,
             }
         except Exception:

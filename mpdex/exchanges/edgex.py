@@ -452,8 +452,9 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
 
         for position in position_asset_list:
             if position['contractId'] == contract_id:
-                entry_price = position['avgEntryPrice']
-                unrealized_pnl = position['unrealizePnl']
+                entry_price = position.get('avgEntryPrice', None)
+                unrealized_pnl = position.get('unrealizedPnl', None)
+                liquidation_price = position.get('liquidatePrice', None)
 
         if size == 0:
             return None
@@ -464,7 +465,7 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
             "size": size,
             "entry_price": float(entry_price) if entry_price else None,
             "unrealized_pnl": round(float(unrealized_pnl), 2) if unrealized_pnl else None,
-            "liquidation_price": None,
+            "liquidation_price": liquidation_price,
             "raw_data": pos,
         }
         
@@ -517,7 +518,7 @@ class EdgexExchange(MultiPerpDexMixin, MultiPerpDex):
             "size": str(size),
             "entry_price": round(entry_price, 2),
             "unrealized_pnl": round(unrealized_pnl, 2),
-            "liquidation_price": None,
+            "liquidation_price": None, #없음
             "raw_data": pos_data,
         }
 

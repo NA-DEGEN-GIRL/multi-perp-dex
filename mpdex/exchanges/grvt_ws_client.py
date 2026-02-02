@@ -222,7 +222,7 @@ class GrvtWSClient:
                     "size": str(size_val),
                     "entry_price": entry_price,
                     "unrealized_pnl": unrealized_pnl,
-                    "liquidation_price": feed.get("liquidation_price"),
+                    "liquidation_price": feed.get("est_liquidation_price",None),
                     "raw_data": feed,
                 }
             self._position_ts[instrument] = time.time()
