@@ -101,6 +101,9 @@ class MultiPerpDex(ABC):
                 "symbol": str,
                 "leverage": int or None,
                 "margin_mode": 'isolated' or 'cross' or None,
+                "status": "ok" or "error",
+                "max_leverage": int or None,
+                "available_margin_modes": list (e.g., ["cross", "isolated"] or ["cross"]),
             }
         """
         pass
@@ -135,6 +138,7 @@ class MultiPerpDexMixin:
             "margin_mode": None,
             "status": "not_implemented",
             "max_leverage": None,
+            "available_margin_modes": []
         }
 
     async def get_available_symbols(self):

@@ -459,6 +459,7 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
                 "margin_mode": "cross",
                 "status": "ok",
                 "max_leverage": max_lev,
+                "available_margin_modes": ["cross"],
             }
         except Exception as e:
             return {
@@ -467,6 +468,7 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
                 "margin_mode": None,
                 "status": "error",
                 "max_leverage": max_lev,
+                "available_margin_modes": ["cross"],
                 "message": str(e),
             }
 

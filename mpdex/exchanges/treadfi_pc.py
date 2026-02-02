@@ -895,6 +895,7 @@ $('#signBtn').onclick = async () => {
 						"margin_mode": "isolated" if setting.get("isolated") else "cross",
 						"status": "ok",
 						"max_leverage": max_lev,
+						"available_margin_modes": ["cross", "isolated"],
 					}
 
 			# Not found = default settings (cross margin, max leverage)
@@ -904,6 +905,7 @@ $('#signBtn').onclick = async () => {
 				"margin_mode": "cross",
 				"status": "ok",
 				"max_leverage": max_lev,
+				"available_margin_modes": ["cross", "isolated"],
 			}
 		except Exception as e:
 			return {
@@ -911,6 +913,7 @@ $('#signBtn').onclick = async () => {
 				"leverage": None,
 				"margin_mode": None,
 				"status": "error",
+				"available_margin_modes": ["cross", "isolated"],
 				"message": str(e),
 			}
 

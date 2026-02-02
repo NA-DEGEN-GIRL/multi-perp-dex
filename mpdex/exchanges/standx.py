@@ -48,6 +48,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
     ):
         super().__init__()
         self.has_spot = False
+
         self.wallet_address = wallet_address
         self.chain = chain
         self._http_timeout = http_timeout
@@ -870,6 +871,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
                 "margin_mode": data.get("margin_mode", "cross"),
                 "status": "ok",
                 "max_leverage": max_lev,
+                "available_margin_modes": ["cross", "isolated"],
             }
         except Exception as e:
             return {
@@ -878,6 +880,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
                 "margin_mode": None,
                 "status": "error",
                 "max_leverage": None,
+                "available_margin_modes": ["cross", "isolated"],
                 "message": str(e),
             }
 

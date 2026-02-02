@@ -43,6 +43,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
     ):
         super().__init__()
         self.has_spot = True
+        self.has_margin_mode = True  # isolated / cross 지원 여부
 
         self.wallet_address = wallet_address
         self.vault_address = vault_address
@@ -1015,18 +1016,18 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         """
         dex, coin = parse_hip3_symbol(symbol.strip())
 
-        # Get max_leverage from asset info
-        _, _, max_lev, _, *_ = await self._resolve_perp_asset_and_szdec(dex, coin)
+        # Get max_leverage and only_isolated from asset info
+        _, _, max_lev, only_isolated, *_ = await self._resolve_perp_asset_and_szdec(dex, coin)
 
         if prefer_ws:
             try:
-                return await self.get_leverage_info_ws(coin, max_leverage=max_lev, timeout=timeout)
+                return await self.get_leverage_info_ws(coin, max_leverage=max_lev, only_isolated=only_isolated, timeout=timeout)
             except Exception as e:
                 print(f"[HL] get_leverage_info WS failed, falling back to REST: {e}")
 
-        return await self.get_leverage_info_rest(coin, max_leverage=max_lev)
+        return await self.get_leverage_info_rest(coin, max_leverage=max_lev, only_isolated=only_isolated)
 
-    async def get_leverage_info_ws(self, coin: str, max_leverage: int = 1, timeout: float = 5.0) -> Dict[str, Any]:
+    async def get_leverage_info_ws(self, coin: str, max_leverage: int = 1, only_isolated: bool = False, timeout: float = 5.0) -> Dict[str, Any]:
         """Get leverage info via WebSocket (subscribe → receive → unsubscribe)"""
         if not self.ws_client:
             await self._create_ws_client()
@@ -1055,7 +1056,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             if not data:
                 raise ValueError(f"No data received for {coin}")
 
-            return self._parse_leverage_info(coin, data, max_leverage=max_leverage)
+            return self._parse_leverage_info(coin, data, max_leverage=max_leverage, only_isolated=only_isolated)
 
         finally:
             # Unsubscribe and cleanup
@@ -1066,7 +1067,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             self.ws_client._active_asset_events.pop(key, None)
             self.ws_client._active_asset_data.pop(key, None)
 
-    async def get_leverage_info_rest(self, coin: str, max_leverage: int = 1) -> Dict[str, Any]:
+    async def get_leverage_info_rest(self, coin: str, max_leverage: int = 1, only_isolated: bool = False) -> Dict[str, Any]:
         """Get leverage info via REST API"""
         address = self.vault_address or self.wallet_address
         s = self._session()
@@ -1082,17 +1083,19 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
                 return {"status": "error", "message": f"REST failed: {r.status} {text}"}
             data = await r.json()
 
-        return self._parse_leverage_info(coin, data, max_leverage=max_leverage)
+        return self._parse_leverage_info(coin, data, max_leverage=max_leverage, only_isolated=only_isolated)
 
-    def _parse_leverage_info(self, coin: str, data: Dict[str, Any], max_leverage: int = 1) -> Dict[str, Any]:
+    def _parse_leverage_info(self, coin: str, data: Dict[str, Any], max_leverage: int = 1, only_isolated: bool = False) -> Dict[str, Any]:
         """Parse activeAssetData response to standard format"""
         leverage_info = data.get("leverage", {})
+        available_modes = ["isolated"] if only_isolated else ["cross", "isolated"]
         return {
             "symbol": coin,
             "leverage": leverage_info.get("value"),
             "margin_mode": leverage_info.get("type"),
             "status": "ok",
             "max_leverage": max_leverage,
+            "available_margin_modes": available_modes,
             "mark_price": data.get("markPx"),
             "max_trade_sizes": data.get("maxTradeSzs"),
             "available_to_trade": data.get("availableToTrade"),
