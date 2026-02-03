@@ -692,9 +692,6 @@ $('#signBtn').onclick = async () => {
 		if not self._has_valid_cookies():
 			raise RuntimeError("not logged in: missing session cookies")
 
-		res = await self.update_leverage(symbol)
-		#print(res)
-
 		s = self._session()
 
 		# 전략 ID 간단 상수

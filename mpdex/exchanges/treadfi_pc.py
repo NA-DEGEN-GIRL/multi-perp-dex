@@ -951,9 +951,6 @@ $('#signBtn').onclick = async () => {
 		if not self._has_valid_cookies():
 			raise RuntimeError("not logged in: missing session cookies")
 
-		# Update leverage first
-		await self.update_leverage(symbol)
-
 		s = self._session()
 
 		# TreadFi strategy IDs

@@ -1162,10 +1162,6 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             size_dec = self._spot_base_sz_decimals(pair)
             mark_sym = pair
         else:
-            try:
-                await self.update_leverage(symbol)
-            except Exception:
-                pass
             dex, coin_key = parse_hip3_symbol(raw)
             asset_id, sz_dec, *_ = await self._resolve_perp_asset_and_szdec(dex, coin_key)
             tick_dec = max(0, 6 - int(sz_dec))

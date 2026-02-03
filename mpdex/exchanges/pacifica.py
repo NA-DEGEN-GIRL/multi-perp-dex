@@ -385,12 +385,6 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
         """
         symbol = symbol.upper()
 
-        # Update leverage to max before order
-        try:
-            await self.update_leverage(symbol)
-        except Exception as e:
-            print(f"[pacifica] update_leverage failed (continuing): {e}")
-
         amount = self._adjust_amount_lot(symbol, amount, rounding=ROUND_DOWN)
         side_pacifica = "bid" if side.lower() == "buy" else "ask"
 
