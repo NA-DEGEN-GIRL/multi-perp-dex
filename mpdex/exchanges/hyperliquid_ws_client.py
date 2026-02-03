@@ -111,6 +111,7 @@ class HLWSClientRaw(BaseWSClient):
         self._send_lock = asyncio.Lock()
         self._active_subs: set[str] = set()
         self._price_events: Dict[str, asyncio.Event] = {}
+        self._dynamic_dex_subs: set[str] = set()  # Track dynamically added DEX allMids (for resubscribe)
 
         # [ADDED] Orderbook 캐시: coin(upper) -> {"bids": [...], "asks": [...], "time": int}
         self._orderbooks: Dict[str, Dict[str, Any]] = {}
@@ -405,12 +406,14 @@ class HLWSClientRaw(BaseWSClient):
             key = _sub_key(sub)
             if key not in self._active_subs:
                 await self._send_subscribe(sub)
+            self._dynamic_dex_subs.add("hl")  # Track for resubscribe
         else:
             d = str(dex).lower().strip()
             sub = {"type": "allMids", "dex": d}
             key = _sub_key(sub)
             if key not in self._active_subs:
                 await self._send_subscribe(sub)
+            self._dynamic_dex_subs.add(d)  # Track for resubscribe
 
     async def _send_subscribe(self, sub: dict) -> None:
         """subscribe 메시지 전송(중복 방지)."""
@@ -613,6 +616,15 @@ class HLWSClientRaw(BaseWSClient):
         for sub in self._subscriptions or []:
             await self._send_subscribe(sub)
             logger.info(f"RESUB -> {_json_dumps({'method':'subscribe','subscription':sub})}")
+
+        # 2-1) 동적으로 추가된 DEX allMids 재구독
+        for dex in self._dynamic_dex_subs:
+            if dex == "hl":
+                sub = {"type": "allMids"}
+            else:
+                sub = {"type": "allMids", "dex": dex}
+            await self._send_subscribe(sub)
+            logger.info(f"RESUB(dex) -> {_json_dumps({'method':'subscribe','subscription':sub})}")
 
         # 3) 유저 스트림 재구독 (최소 필요 3종)
         for u in list(self._user_subs):
