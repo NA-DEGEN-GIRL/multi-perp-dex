@@ -799,46 +799,52 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
 
     async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None) -> Dict[str, Any]:
         """
-        Update leverage and margin mode for a symbol (concurrent requests).
+        Update leverage and/or margin mode for a symbol.
 
         Args:
             symbol: Trading pair (e.g., "BTC-USD")
-            leverage: New leverage value. If None, uses max_leverage from symbol info.
-            margin_mode: "cross" or "isolated". If None, defaults to "cross".
+            leverage: If None, only margin_mode is updated (if provided).
+            margin_mode: If None, only leverage is updated (if provided).
 
-        Returns:
-            {"status": "ok", ...} on success or {"status": "skipped", ...} if already updated
+        Note: At least one of leverage or margin_mode should be provided.
         """
-        # Get symbol info for max_leverage
+        if leverage is None and margin_mode is None:
+            return {"status": "error", "message": "At least one of leverage or margin_mode must be provided"}
+
+        target_leverage = leverage
+        target_margin_mode = margin_mode.lower() if margin_mode else None
+
+        # Execute requests based on what is provided
         try:
-            info = self._get_symbol_meta(symbol)
-        except ValueError:
-            await self._update_available_symbols()
-            info = self._get_symbol_meta(symbol)
+            tasks = []
+            results = [None, None]  # [leverage_result, margin_result]
 
-        max_leverage = int(info.get("max_leverage", 20))
-        target_leverage = leverage if leverage is not None else max_leverage
-        target_leverage = max(1, min(target_leverage, max_leverage))
-        target_margin_mode = (margin_mode or "cross").lower()
+            if target_leverage is not None:
+                tasks.append(("leverage", self.change_leverage(symbol, target_leverage)))
+            if target_margin_mode is not None:
+                tasks.append(("margin", self.change_margin_mode(symbol, target_margin_mode)))
 
-        # Check if already updated to same settings
-        cached = self._leverage_cache.get(symbol)
-        if cached and cached.get("leverage") == target_leverage and cached.get("margin_mode") == target_margin_mode:
-            return {"status": "skipped", "message": f"already set to leverage={target_leverage}, margin_mode={target_margin_mode}"}
+            if tasks:
+                task_results = await asyncio.gather(*[t[1] for t in tasks])
+                for i, (task_type, _) in enumerate(tasks):
+                    if task_type == "leverage":
+                        results[0] = task_results[i]
+                    else:
+                        results[1] = task_results[i]
 
-        # Execute both requests concurrently
-        try:
-            lev_result, margin_result = await asyncio.gather(
-                self.change_leverage(symbol, target_leverage),
-                self.change_margin_mode(symbol, target_margin_mode),
-            )
-            # Cache the updated settings
-            self._leverage_cache[symbol] = {"leverage": target_leverage, "margin_mode": target_margin_mode}
+            # Update cache with what was changed
+            cached = self._leverage_cache.get(symbol, {})
+            if target_leverage is not None:
+                cached["leverage"] = target_leverage
+            if target_margin_mode is not None:
+                cached["margin_mode"] = target_margin_mode
+            self._leverage_cache[symbol] = cached
+
             return {
                 "status": "ok",
                 "leverage": target_leverage,
                 "margin_mode": target_margin_mode,
-                "results": [lev_result, margin_result],
+                "results": results,
             }
         except Exception as e:
             return {"status": "error", "message": str(e)}

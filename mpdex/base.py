@@ -82,13 +82,14 @@ class MultiPerpDex(ABC):
     @abstractmethod
     async def update_leverage(self, symbol, leverage=None, margin_mode=None):
         """
-        Update the leverage for the given symbol.
-        Returns the result of the leverage update operation.
+        Update leverage and/or margin mode for the given symbol.
 
         Args:
             symbol: Trading pair symbol
-            leverage: int or None. If None, uses max leverage for the symbol.
-            margin_mode: 'isolated' or 'cross' or None. If None, defaults to 'cross'.
+            leverage: int or None. If None, only margin_mode is updated (if provided).
+            margin_mode: 'isolated' or 'cross' or None. If None, only leverage is updated (if provided).
+
+        Note: At least one of leverage or margin_mode should be provided.
         """
         pass
 
@@ -122,11 +123,17 @@ class MultiPerpDex(ABC):
 
 class MultiPerpDexMixin:
     async def update_leverage(self, symbol, leverage=None, margin_mode=None):
-        """Default implementation: returns not_implemented status."""
+        """
+        Default implementation: returns not_implemented status.
+
+        Args:
+            leverage: If None, only margin_mode is updated (if provided).
+            margin_mode: If None, only leverage is updated (if provided).
+        """
         return {
             "symbol": symbol,
-            "leverage": None,
-            "margin_mode": margin_mode or "cross",
+            "leverage": leverage,
+            "margin_mode": margin_mode,
             "status": "not_implemented",
         }
 

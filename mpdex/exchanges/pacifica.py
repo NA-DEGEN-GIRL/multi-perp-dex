@@ -246,26 +246,33 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
     # ---------------------------
     async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None) -> Dict[str, Any]:
         """
-        Update leverage for symbol (REST-only, WS not supported by Pacifica).
-        If leverage is None, uses max_leverage from symbol meta.
-        If margin_mode is None, defaults to 'cross'.
+        Update leverage and/or margin mode for symbol (REST-only).
+
+        Args:
+            leverage: If None, only margin_mode is updated (if provided).
+            margin_mode: If None, only leverage is updated (if provided).
+
+        Note: At least one of leverage or margin_mode should be provided.
         """
         symbol = symbol.upper()
-        if self._leverage_updated.get(symbol):
-            return {"status": "ok", "message": "already updated"}
 
-        meta = self._get_symbol_meta(symbol)
-        max_lev = meta.get("max_leverage", 1)
-        lev_value = int(leverage or max_lev)
-        actual_margin_mode = (margin_mode or "cross").lower()
+        if leverage is None and margin_mode is None:
+            return {"status": "error", "message": "At least one of leverage or margin_mode must be provided"}
 
         # update_leverage is REST-only (not supported via WS)
-        result = await self.update_leverage_rest(symbol, lev_value, actual_margin_mode)
-        result = result.get("results", [])
-        if result[0].get("success") and result[1].get("success"):
-            self._leverage_updated[symbol] = True
-            return {"status": "ok", "leverage": lev_value, "margin_mode": actual_margin_mode, "result": result}
-        return {"status": "error", "result": result}
+        result = await self.update_leverage_rest(symbol, leverage, margin_mode)
+        results = result.get("results", [])
+
+        # Check success based on what was requested
+        success = True
+        if leverage is not None and results and not results[0].get("success"):
+            success = False
+        if margin_mode is not None and results and len(results) > 1 and not results[1].get("success"):
+            success = False
+
+        if success:
+            return {"status": "ok", "leverage": leverage, "margin_mode": margin_mode, "result": results}
+        return {"status": "error", "result": results}
 
     async def get_leverage_info(self, symbol: str) -> Dict[str, Any]:
         """
@@ -316,12 +323,17 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
                 "message": str(e),
             }
 
-    async def update_leverage_rest(self, symbol: str, leverage: int, margin_mode: str) -> Dict[str, Any]:
-        """Update leverage via REST API (concurrent requests)"""
+    async def update_leverage_rest(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Update leverage and/or margin mode via REST API.
+
+        Args:
+            leverage: If None, leverage is not updated.
+            margin_mode: If None, margin mode is not updated.
+        """
         import asyncio
         timestamp = int(time.time() * 1000)
         expiry_window = 5000
-        is_isolated = margin_mode.lower() == "isolated"
 
         # Common request fields
         common = {
@@ -331,30 +343,41 @@ class PacificaExchange(MultiPerpDexMixin, MultiPerpDex):
             "expiry_window": expiry_window,
         }
 
-        # Build leverage request
-        lev_sig_header = {"type": "update_leverage", "timestamp": timestamp, "expiry_window": expiry_window}
-        lev_sig_payload = {"symbol": symbol, "leverage": leverage}
-        _, lev_signature = sign_message(lev_sig_header, lev_sig_payload, self.agent_keypair)
-        lev_request = {**common, **lev_sig_payload, "signature": lev_signature}
-
-        # Build margin mode request
-        margin_sig_header = {"type": "update_margin_mode", "timestamp": timestamp, "expiry_window": expiry_window}
-        margin_sig_payload = {"symbol": symbol, "is_isolated": is_isolated}
-        _, margin_signature = sign_message(margin_sig_header, margin_sig_payload, self.agent_keypair)
-        margin_request = {**common, **margin_sig_payload, "signature": margin_signature}
-
-        # Execute both requests concurrently
         async def post_json(url: str, payload: dict):
             s = self._session()
             async with s.post(url, json=payload, headers={"Content-Type": "application/json"}) as r:
                 return await r.json()
 
-        lev_result, margin_result = await asyncio.gather(
-            post_json(f"{BASE_URL}/account/leverage", lev_request),
-            post_json(f"{BASE_URL}/account/margin", margin_request),
-        )
+        tasks = []
+        results = [None, None]  # [leverage_result, margin_result]
 
-        return {"results": [lev_result, margin_result]}
+        # Build leverage request if leverage is provided
+        if leverage is not None:
+            lev_sig_header = {"type": "update_leverage", "timestamp": timestamp, "expiry_window": expiry_window}
+            lev_sig_payload = {"symbol": symbol, "leverage": leverage}
+            _, lev_signature = sign_message(lev_sig_header, lev_sig_payload, self.agent_keypair)
+            lev_request = {**common, **lev_sig_payload, "signature": lev_signature}
+            tasks.append(("leverage", post_json(f"{BASE_URL}/account/leverage", lev_request)))
+
+        # Build margin mode request if margin_mode is provided
+        if margin_mode is not None:
+            is_isolated = margin_mode.lower() == "isolated"
+            margin_sig_header = {"type": "update_margin_mode", "timestamp": timestamp, "expiry_window": expiry_window}
+            margin_sig_payload = {"symbol": symbol, "is_isolated": is_isolated}
+            _, margin_signature = sign_message(margin_sig_header, margin_sig_payload, self.agent_keypair)
+            margin_request = {**common, **margin_sig_payload, "signature": margin_signature}
+            tasks.append(("margin", post_json(f"{BASE_URL}/account/margin", margin_request)))
+
+        # Execute requests concurrently
+        if tasks:
+            task_results = await asyncio.gather(*[t[1] for t in tasks])
+            for i, (task_type, _) in enumerate(tasks):
+                if task_type == "leverage":
+                    results[0] = task_results[i]
+                else:
+                    results[1] = task_results[i]
+
+        return {"results": results}
 
     async def create_order(self, symbol, side, amount, price=None, order_type='market', *, is_reduce_only=False, slippage = "0.1"):
         """

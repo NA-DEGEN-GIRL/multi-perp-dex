@@ -570,33 +570,54 @@ $('#signBtn').onclick = async () => {
 			return f"{base}/{quote}"
 	
 	async def update_leverage(self, symbol, leverage=None, margin_mode=None):
+		"""
+		Update leverage and/or margin mode via TreadFi API.
 
-		if self._leverage_updated_to_max:
-			return {"status": "ok", "message": "already updated"}
+		Args:
+			leverage: If None, only margin_mode is updated (current leverage is preserved).
+			margin_mode: If None, only leverage is updated (current margin_mode is preserved).
+
+		Note: At least one of leverage or margin_mode should be provided.
+		"""
+		if leverage is None and margin_mode is None:
+			return {"status": "error", "message": "At least one of leverage or margin_mode must be provided"}
 
 		symbol_ws = self._symbol_convert_for_ws(symbol)
-		_, _, max_leverage, only_isolated, _, _ = self.perp_asset_map.get(symbol_ws, (None,None,1,False,0,None))
+		_, _, max_leverage, only_isolated, _, _ = self.perp_asset_map.get(symbol_ws, (None, None, 1, False, 0, None))
 
-		# Determine actual margin mode
-		requested_mode = (margin_mode or "cross").upper()
+		# If one of leverage/margin_mode is None, get current settings to preserve it
+		current_leverage = leverage
+		current_margin_mode = margin_mode
+		if leverage is None or margin_mode is None:
+			current_info = await self.get_leverage_info(symbol)
+			if current_info.get("status") == "ok":
+				if leverage is None:
+					current_leverage = current_info.get("leverage", max_leverage or 1)
+				if margin_mode is None:
+					current_margin_mode = current_info.get("margin_mode", "cross")
+			else:
+				# Fallback defaults
+				if leverage is None:
+					current_leverage = max_leverage or 1
+				if margin_mode is None:
+					current_margin_mode = "cross"
+
+		# Determine actual margin mode (handle only_isolated)
+		requested_mode = current_margin_mode.upper()
+		forced_msg = None
 		if only_isolated and requested_mode == "CROSS":
 			actual_margin_mode = "ISOLATED"
 			forced_msg = "symbol only supports isolated, forced from cross to isolated"
 		else:
 			actual_margin_mode = requested_mode
-			forced_msg = None
-
-		if not leverage:
-			leverage = max_leverage
 
 		payload = {
 			"account_ids": [self.account_id],
 			"margin_mode": actual_margin_mode,
 			"pair": symbol,
-			"leverage": leverage
+			"leverage": int(current_leverage)
 		}
-		#print(payload)
-		
+
 		headers = {
 			"Content-Type": "*/*",
 			"X-CSRFToken": self._cookies["csrftoken"],
@@ -614,10 +635,9 @@ $('#signBtn').onclick = async () => {
 				data = {"status": r.status, "text": txt}
 
 			if data.get("message") == "Leverage changed successfully.":
-				self._leverage_updated_to_max = True
 				data["status"] = "ok"
 				data["leverage"] = leverage
-				data["margin_mode"] = actual_margin_mode.lower()
+				data["margin_mode"] = margin_mode
 			if forced_msg:
 				data["message"] = forced_msg
 			return data

@@ -828,28 +828,49 @@ $('#signBtn').onclick = async () => {
 	# TreadFi Orders
 	# ----------------------------
 	async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None):
-		"""Update leverage via TreadFi API to max_leverage"""
+		"""
+		Update leverage and/or margin mode via TreadFi API.
+
+		Args:
+			leverage: If None, only margin_mode is updated (current leverage is preserved).
+			margin_mode: If None, only leverage is updated (current margin_mode is preserved).
+
+		Note: At least one of leverage or margin_mode should be provided.
+		"""
+		if leverage is None and margin_mode is None:
+			return {"status": "error", "message": "At least one of leverage or margin_mode must be provided"}
+
 		# ws 조회는 pacifica symbol, treadfi 주문은 treadfi symbol 사용
 		pac_symbol = self._symbol_to_pacifica(symbol)
-
-		# Skip if already updated
-		if self._leverage_updated.get(pac_symbol):
-			return {"status": "ok", "message": "already updated"}
 
 		if not self._has_valid_cookies():
 			raise RuntimeError("not logged in")
 
-		# Get max_leverage from symbol meta
-		meta = self._symbol_meta.get(pac_symbol, {})
-		max_lev = meta.get("max_leverage", 10)
-		lev = int(leverage or max_lev)
-		actual_margin_mode = (margin_mode or "cross").upper()  # TreadFi uses uppercase
+		# If one of leverage/margin_mode is None, get current settings to preserve it
+		current_leverage = leverage
+		current_margin_mode = margin_mode
+		if leverage is None or margin_mode is None:
+			current_info = await self.get_leverage_info(symbol)
+			if current_info.get("status") == "ok":
+				if leverage is None:
+					current_leverage = current_info.get("leverage", 1)
+				if margin_mode is None:
+					current_margin_mode = current_info.get("margin_mode", "cross")
+			else:
+				# Fallback defaults
+				if leverage is None:
+					meta = self._symbol_meta.get(pac_symbol, {})
+					current_leverage = meta.get("max_leverage", 10)
+				if margin_mode is None:
+					current_margin_mode = "cross"
+
+		actual_margin_mode = current_margin_mode.upper()  # TreadFi uses uppercase
 
 		payload = {
 			"account_ids": [self.account_id],
 			"margin_mode": actual_margin_mode,
 			"pair": symbol,
-			"leverage": lev,
+			"leverage": int(current_leverage),
 		}
 
 		headers = {
@@ -865,9 +886,8 @@ $('#signBtn').onclick = async () => {
 			txt = await r.text()
 			try:
 				result = json.loads(txt)
-				if r.status == 200:
-					self._leverage_updated[pac_symbol] = True
-				result['leverage_set'] = lev
+				result['leverage'] = leverage
+				result['margin_mode'] = margin_mode
 				return result
 			except Exception:
 				return {"status": r.status, "text": txt}

@@ -65,7 +65,6 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         self.perp_metas_raw: List[dict] = []
         self.perp_asset_map: Dict[str, Tuple[int, int, int, bool, int]] = {}
 
-        self._leverage_updated_to_max = False
         self._http: Optional[aiohttp.ClientSession] = None
 
         # WS
@@ -81,7 +80,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             "get_orderbook": True,
             "create_order": True,  # Hyperliquid supports WS trading
             "cancel_orders": True,  # Hyperliquid supports WS cancel
-            "update_leverage": False,
+            "update_leverage": True,
         }
 
     # -------------------- 추상/오버라이드 대상 --------------------
@@ -964,31 +963,62 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         raise last_error or RuntimeError("_send_action failed after retries")
 
     async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None, *, prefer_ws: bool = True, timeout: float = 5.0):
-        if self._leverage_updated_to_max:
-            return {"status": "ok", "message": "already updated"}
+        """
+        Update leverage and/or margin mode for a symbol.
+
+        Args:
+            leverage: If None, current leverage is preserved.
+            margin_mode: If None, current margin_mode is preserved.
+
+        Note: At least one of leverage or margin_mode should be provided.
+        """
+        if leverage is None and margin_mode is None:
+            return {"status": "error", "message": "At least one of leverage or margin_mode must be provided"}
+
         dex, coin_key = parse_hip3_symbol(symbol.strip())
-        asset_id, _, max_lev, only_isolated, *_ = await self._resolve_perp_asset_and_szdec(dex, coin_key)
+        asset_id, _, _, only_isolated, *_ = await self._resolve_perp_asset_and_szdec(dex, coin_key)
         if asset_id is None:
             return {"status": "error", "message": "asset not found"}
-        lev = int(leverage or max_lev or 1)
 
-        # Determine actual margin mode
-        requested_mode = (margin_mode or "cross").lower()
+        # If leverage or margin_mode is None, get current settings
+        current_leverage = leverage
+        current_margin_mode = margin_mode
+        if leverage is None or margin_mode is None:
+            try:
+                current_info = await self.get_leverage_info(symbol, prefer_ws=prefer_ws, timeout=timeout)
+                if current_info.get("status") == "ok":
+                    if leverage is None:
+                        current_leverage = current_info.get("leverage", 1)
+                    if margin_mode is None:
+                        current_margin_mode = current_info.get("margin_mode", "cross")
+                else:
+                    # Fallback defaults
+                    if leverage is None:
+                        current_leverage = 1
+                    if margin_mode is None:
+                        current_margin_mode = "cross"
+            except Exception:
+                # Fallback defaults on error
+                if leverage is None:
+                    current_leverage = 1
+                if margin_mode is None:
+                    current_margin_mode = "cross"
+
+        # Determine actual margin mode (handle only_isolated)
+        requested_mode = current_margin_mode.lower()
+        forced_msg = None
         if only_isolated and requested_mode == "cross":
             actual_mode = "isolated"
             forced_msg = "symbol only supports isolated, forced from cross to isolated"
         else:
             actual_mode = requested_mode
-            forced_msg = None
 
         is_cross = actual_mode == "cross"
-        action = {"type": "updateLeverage", "asset": int(asset_id), "isCross": is_cross, "leverage": lev}
+        action = {"type": "updateLeverage", "asset": int(asset_id), "isCross": is_cross, "leverage": int(current_leverage)}
         payload = await self._make_signed_payload(action)
         resp = await self._send_action(payload, prefer_ws=prefer_ws, timeout=timeout)
-        if (resp or {}).get("status", "").lower() == "ok":
-            self._leverage_updated_to_max = True
 
-        result = {"status": "ok", "leverage": lev, "margin_mode": actual_mode, "result": resp}
+        result = {"status": "ok", "leverage": current_leverage, "margin_mode": actual_mode, "result": resp}
         if forced_msg:
             result["message"] = forced_msg
         return result

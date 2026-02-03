@@ -416,21 +416,43 @@ class ExtendedExchange(MultiPerpDexMixin, MultiPerpDex):
         return orderbook
 
     async def update_leverage(self, symbol: str, leverage: Optional[int] = None, margin_mode: Optional[str] = None) -> Dict[str, Any]:
-        """Update leverage for symbol (only cross margin supported)"""
+        """
+        Update leverage for symbol (only cross margin supported).
+
+        Args:
+            leverage: If None, leverage is not updated.
+            margin_mode: Ignored - Extended only supports cross margin.
+
+        Note: At least one of leverage or margin_mode should be provided.
+        """
+        if leverage is None and margin_mode is None:
+            return {"status": "error", "message": "At least one of leverage or margin_mode must be provided"}
+
         meta = self._get_symbol_meta(symbol)
         max_lev = meta.get("max_leverage", 1)
-        lev = leverage if leverage is not None else max_lev
-        requested_mode = (margin_mode or "cross").lower()
 
         message = None
-        if requested_mode == "isolated":
-            message = "Extended only supports cross margin. Using cross instead."
+        if margin_mode and margin_mode.lower() == "isolated":
+            message = "Extended only supports cross margin."
             print(f"[extended] {message}")
 
-        res = await self._client.account.update_leverage(market_name=symbol, leverage=Decimal(lev))
+        # If leverage is None, nothing to update (margin_mode is always cross)
+        if leverage is None:
+            result = {
+                "symbol": symbol,
+                "leverage": None,
+                "margin_mode": "cross",
+                "status": "ok",
+                "max_leverage": max_lev,
+            }
+            if message:
+                result["message"] = message
+            return result
+
+        res = await self._client.account.update_leverage(market_name=symbol, leverage=Decimal(leverage))
         result = {
             "symbol": symbol,
-            "leverage": lev,
+            "leverage": leverage,
             "margin_mode": "cross",
             "status": "ok",
             "max_leverage": max_lev,
