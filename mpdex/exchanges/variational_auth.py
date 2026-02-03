@@ -116,10 +116,17 @@ class VariationalAuth:
         }
         payload = {"address": addr}
 
+        print(f"[variational] calling {GEN_SIGN_DATA_URL} with payload={payload}")
         async with curl_requests.AsyncSession(impersonate=self._impersonate, timeout=self._http_timeout) as s:
             r = await s.post(GEN_SIGN_DATA_URL, json=payload, headers=headers)
+            print(f"[variational] response status={r.status_code}, text={r.text[:500] if r.text else 'empty'}")
             r.raise_for_status()
-            return r.json()
+            # API가 plain text(SIWE 메시지)를 직접 반환하는 경우 처리
+            try:
+                return r.json()
+            except Exception:
+                # plain text인 경우 {"message": text} 형태로 반환
+                return {"message": r.text}
 
     def _extract_message(self, data: Dict[str, Any]) -> str:
         """
@@ -202,12 +209,17 @@ class VariationalAuth:
             try:
                 q = req.rel_url.query
                 address = q.get("address") or ""
+                print(f"[variational] /signing-data called, address={address}")
                 if not address:
                     return web.json_response({"error": "missing address"}, status=400)
                 data = await self._generate_signing_data_async(address)
+                print(f"[variational] signing data received: {data}")
                 msg = self._extract_message(data)
                 return web.json_response({"address": to_checksum_address(address), "message": msg, "raw": data})
             except Exception as e:
+                import traceback
+                print(f"[variational] ERROR in /signing-data: {e}")
+                traceback.print_exc()
                 return web.json_response({"error": str(e)}, status=500)
 
         async def handle_submit(req: web.Request):
@@ -236,11 +248,12 @@ class VariationalAuth:
 
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, "127.0.0.1", port)
+        site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
 
         url = f"http://127.0.0.1:{port}"
         print(f"[variational] 브라우저를 열고 {url} 에 접속하여 서명하세요.")
+        print(f"[variational] WSL에서 Windows 브라우저 사용 시: http://<WSL_IP>:{port}")
         if open_browser:
             try:
                 webbrowser.open(url)
