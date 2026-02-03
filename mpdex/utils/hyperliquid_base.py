@@ -1062,12 +1062,12 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         if not self.ws_client:
             await self._create_ws_client()
 
-        coin_upper = coin.upper()
         address = self.vault_address or self.wallet_address
         user_lower = address.lower()
-        subscription = {"type": "activeAssetData", "user": address, "coin": coin_upper}
+        coin_upper = coin.upper()  # WS client uses uppercase for keys
+        subscription = {"type": "activeAssetData", "user": address, "coin": coin}
 
-        # Setup event for waiting
+        # Setup event for waiting (use uppercase for key to match WS client)
         key = (user_lower, coin_upper)
         self.ws_client._active_asset_events[key] = asyncio.Event()
 
@@ -1082,7 +1082,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
                 raise TimeoutError(f"WS activeAssetData not ready for {coin}")
 
             # Get cached data
-            data = self.ws_client.get_active_asset_data(coin_upper, user=address)
+            data = self.ws_client.get_active_asset_data(coin, user=address)
             if not data:
                 raise ValueError(f"No data received for {coin}")
 
@@ -1095,7 +1095,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
             except Exception:
                 pass
             self.ws_client._active_asset_events.pop(key, None)
-            self.ws_client._active_asset_data.pop(key, None)
+            self.ws_client._active_asset_data.pop((user_lower, coin_upper), None)
 
     async def get_leverage_info_rest(self, coin: str, max_leverage: int = 1, only_isolated: bool = False) -> Dict[str, Any]:
         """Get leverage info via REST API"""
@@ -1104,7 +1104,7 @@ class HyperliquidBase(MultiPerpDexMixin, MultiPerpDex):
         payload = {
             "type": "activeAssetData",
             "user": address,
-            "coin": coin.upper(),
+            "coin": coin,
         }
 
         async with s.post(f"{self.http_base}/info", json=payload, headers={"Content-Type": "application/json"}) as r:

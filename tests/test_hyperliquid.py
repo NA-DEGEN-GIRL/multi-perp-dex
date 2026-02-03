@@ -10,7 +10,7 @@ from keys.pk_superstack import SUPERSTACK_KEY
 # test done except spot order
 # test done superstack perp
 
-coin1 = 'BTC'
+coin1 = 'xyz:COPPER'
 amount1 = 0.0002
 symbol = symbol_create('hyperliquid',coin1) # only perp atm
 
@@ -32,8 +32,8 @@ async def main():
     res = await hyperliquid.get_position(symbol)
     print(res)
 
-    res = await hyperliquid.update_leverage(symbol, 40,'cross')
-    print(res)
+    #res = await hyperliquid.update_leverage(symbol, 40,'cross')
+    #print(res)
 
     res = await hyperliquid.get_leverage_info(symbol)
     print(res)
