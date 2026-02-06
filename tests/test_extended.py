@@ -72,6 +72,7 @@ async def main():
 
     res = await exchange.get_leverage_info(symbol)
     print(f"Leverage Info: {res}\n")
+    await exchnage.close()
     return
 
     price = None

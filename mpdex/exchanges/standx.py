@@ -709,7 +709,7 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
 
         return {"canceled": len(order_ids), "result": result}
 
-    async def cancel_order(self, order_id: Optional[int] = None, client_order_id: Optional[str] = None) -> Dict[str, Any]:
+    async def cancel_order(self, order_id: Optional[int] = None, client_order_id: Optional[str] = None, *, skip_rest: bool = False) -> Dict[str, Any]:
         """
         Cancel single order (WS first, REST fallback)
 
@@ -730,15 +730,19 @@ class StandXExchange(MultiPerpDexMixin, MultiPerpDex):
             except Exception as e:
                 await self._increment_fallback("cancel_orders", is_order_ws=True)
                 print(f"[StandXExchange] cancel_order WS failed, falling back to REST: {e}")
+                if skip_rest:
+                    print('rest api skipped. no order canceled at this moment')
+                    return None
 
-        # REST fallback
-        payload: Dict[str, Any] = {}
-        if order_id:
-            payload["order_id"] = order_id
-        if client_order_id:
-            payload["cl_ord_id"] = client_order_id
+        if not skip_rest:
+            # REST fallback
+            payload: Dict[str, Any] = {}
+            if order_id:
+                payload["order_id"] = order_id
+            if client_order_id:
+                payload["cl_ord_id"] = client_order_id
 
-        return await self._post_signed("/api/cancel_order", payload)
+            return await self._post_signed("/api/cancel_order", payload)
 
     async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """
