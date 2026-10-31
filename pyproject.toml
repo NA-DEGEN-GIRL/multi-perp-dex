@@ -24,6 +24,10 @@ dependencies = [
   "grvt-pysdk>=0.1.24",
   "cairo-lang==0.13.5",
   "msgpack==1.1.2",
+  # Variational 로그인: Cloudflare Turnstile 자동 해결(시스템 Chrome + CDP). 브라우저 없이도 동작은 가능
+  "patchright>=1.49",
+  "eth-account>=0.13",
+  "eth-utils>=5",
 
   # [ADDED] Windows(Py3.10, AMD64) 한정: fastecdsa 사전빌드 휠 자동 설치
   # - pip, uv 모두 PEP 508 마커를 해석합니다.

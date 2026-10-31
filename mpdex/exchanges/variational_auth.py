@@ -29,7 +29,9 @@ except Exception:
 
 VARIATIONAL_BASE = "https://omni.variational.io"
 LOGIN_URL = f"{VARIATIONAL_BASE}/api/auth/login"
-GEN_SIGN_DATA_URL = f"{VARIATIONAL_BASE}/api/auth/generate_signing_data"
+# v2는 {"message", "nonce"} JSON. login 바디에 nonce가 필수라 v2를 우선 사용한다.
+GEN_SIGN_DATA_URL = f"{VARIATIONAL_BASE}/api/auth/v2/generate_signing_data"
+GEN_SIGN_DATA_URL_V1 = f"{VARIATIONAL_BASE}/api/auth/generate_signing_data"
 
 
 class VariationalAuth:
@@ -37,6 +39,10 @@ class VariationalAuth:
     Variational 로그인 래퍼 (TreadFi 스타일)
     - login(port=7080)  # 브라우저 지갑 서명 플로우
     - login(evm_private_key="0x...", port=None)  # 로컬 개인키 서명 플로우
+
+    웹 프론트엔드와 동일하게 POST /api/auth/login 에 Cloudflare Turnstile 토큰을 붙인다.
+    (헤더 cf-turnstile-token / cf-turnstile-interactive, 바디 captchaToken) — 토큰이 없으면
+    403 cf-mitigated: challenge 로 막힌다. 토큰은 variational_turnstile 모듈이 브라우저로 뽑는다.
     """
 
     def __init__(
@@ -46,6 +52,7 @@ class VariationalAuth:
         session_cookies: Optional[dict] = None,         # [CHANGED] 없으면 .cache 규칙을 따르는 경로를 자동 결정
         http_timeout: float = 30.0,
         impersonate: str = "chrome",
+        options: Optional[dict] = None,                 # turnstile_* 옵션 전달용
     ):
         if not wallet_address:
             raise ValueError("wallet_address is required")
@@ -53,6 +60,7 @@ class VariationalAuth:
         self._pk = evm_private_key
         self._http_timeout = http_timeout
         self._impersonate = impersonate
+        self.options = options or {}
 
         self.session_cookies = session_cookies # 여기서 vr-token이 있고 올바르다면 사용
 
@@ -61,6 +69,14 @@ class VariationalAuth:
         self._token: Optional[str] = None
         self._cookie_vr_token: Optional[str] = None
         self._logged_in: bool = False
+        # Turnstile 챌린지 통과용 쿠키/UA (해결 직후 1회 로그인에만 사용)
+        self._cf_cookies: Dict[str, str] = {}
+        self._cf_user_agent: Optional[str] = None
+        self._pending_nonce: Optional[str] = None
+        # /signing-data에서 미리 해결해 둔 Turnstile 토큰(제출 시 재사용)
+        self._pre_token: Optional[str] = None
+        self._pre_token_at: float = 0.0
+        self._pre_task: Optional[asyncio.Task] = None
 
     # ----------------------------
     # Public API
@@ -87,13 +103,29 @@ class VariationalAuth:
         if self._pk:
             if Account is None or encode_defunct is None:
                 raise RuntimeError("eth-account 미설치: pip install eth-account")
-            sign_data = await self._generate_signing_data_async(self.wallet_address)
-            message = self._extract_message(sign_data)
-            signed_message = self._personal_sign_local(message, self._pk)
-            resp = await self._login_request(self.wallet_address, signed_message)
-            self._stash_login_response(resp)
-            self.save_cached_session()  # [CHANGED]
-            return {"ok": True, "method": "private_key", **resp}
+            last_err: Optional[BaseException] = None
+            for attempt in range(2):
+                # 1) Turnstile 먼저 해결 (SIWE 메시지 유효시간 60초 → 메시지는 그 다음에 발급)
+                token = await self._prepare_captcha()
+                # 2) 메시지 발급 → 즉시 로컬 서명
+                sign_data = await self._generate_signing_data_async(self.wallet_address)
+                message = self._extract_message(sign_data)
+                nonce = sign_data.get("nonce")
+                signed_message = self._personal_sign_local(message, self._pk)
+                try:
+                    resp = await self._login_request(
+                        self.wallet_address, signed_message, nonce=nonce, token=token
+                    )
+                except RuntimeError as e:
+                    if "만료" in str(e) and attempt == 0:
+                        print("[variational] 메시지 만료 → 재시도")
+                        last_err = e
+                        continue
+                    raise
+                self._stash_login_response(resp)
+                self.save_cached_session()  # [CHANGED]
+                return {"ok": True, "method": "private_key", **resp}
+            raise last_err  # type: ignore[misc]
 
         # 브라우저 지갑 경로
         if not port:
@@ -106,7 +138,10 @@ class VariationalAuth:
     # ----------------------------
     async def _generate_signing_data_async(self, address: str) -> Dict[str, Any]:
         """
-        Variational endpoint 호출: 서명할 메시지 수신
+        Variational endpoint 호출: 서명할 메시지(+ nonce) 수신.
+
+        login 바디에 nonce가 필요하므로 v2를 먼저 쓴다. v2가 없으면 v1(plain text)로 폴백하고
+        nonce는 없는 상태로 둔다(이 경우 바디에서 생략).
         """
         addr = to_checksum_address(address)
         headers = {
@@ -116,17 +151,26 @@ class VariationalAuth:
         }
         payload = {"address": addr}
 
-        print(f"[variational] calling {GEN_SIGN_DATA_URL} with payload={payload}")
         async with curl_requests.AsyncSession(impersonate=self._impersonate, timeout=self._http_timeout) as s:
-            r = await s.post(GEN_SIGN_DATA_URL, json=payload, headers=headers)
-            print(f"[variational] response status={r.status_code}, text={r.text[:500] if r.text else 'empty'}")
-            r.raise_for_status()
-            # API가 plain text(SIWE 메시지)를 직접 반환하는 경우 처리
-            try:
-                return r.json()
-            except Exception:
-                # plain text인 경우 {"message": text} 형태로 반환
-                return {"message": r.text}
+            for url in (GEN_SIGN_DATA_URL, GEN_SIGN_DATA_URL_V1):
+                r = await s.post(url, json=payload, headers=headers)
+                if int(r.status_code) == 404:
+                    continue
+                if int(r.status_code) >= 400:
+                    # 401/403만이 아니라 5xx도 다음 후보 시도
+                    if url == GEN_SIGN_DATA_URL_V1:
+                        r.raise_for_status()
+                    continue
+                try:
+                    data = r.json()
+                    if isinstance(data, dict) and self._extract_message(data):
+                        return data
+                except Exception:
+                    pass
+                # plain text(SIWE 메시지) 응답
+                if r.text and r.text.strip():
+                    return {"message": r.text}
+            raise RuntimeError("generate_signing_data 실패(v1/v2 모두 응답 없음)")
 
     def _extract_message(self, data: Dict[str, Any]) -> str:
         """
@@ -145,56 +189,153 @@ class VariationalAuth:
         sign = Account.sign_message(encode_defunct(text=message), private_key=private_key).signature.hex()  # type: ignore
         return sign
 
-    async def _login_request(self, address: str, signed_message: str) -> Dict[str, Any]:
+    async def _login_request(
+        self,
+        address: str,
+        signed_message: str,
+        nonce: Optional[str] = None,
+        *,
+        token: Optional[str] = None,
+        _attempts: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """
-        Variational 로그인 POST
-        - 최소 헤더: accept, content-type, vr-connected-address
+        Variational 로그인 POST (웹 프론트엔드와 동일한 형태)
+
+        - 헤더: accept, content-type, vr-connected-address
+                (+ cf-turnstile-token / cf-turnstile-interactive)
+        - 바디: {"address", "signed_message", "nonce", "captchaToken"}
         - 응답: JSON token + Set-Cookie: vr-token=...
+
+        token을 주면(미리 해결한 경우) 그걸 쓰고, 없으면 여기서 해결한다.
+        Cloudflare 챌린지(403 cf-mitigated: challenge)면 새 Turnstile 토큰으로 재시도한다.
+        토큰은 단발성(사용 즉시 폐기, ~5분)이라 시도마다 새로 뽑는다.
         """
         addr = to_checksum_address(address)
-        headers = {
-            "accept": "*/*",
-            "content-type": "application/json",
-            "vr-connected-address": addr,
-        }
-        payload = {"address": addr, "signed_message": signed_message}
+        signed = signed_message[2:] if signed_message.startswith("0x") else signed_message
 
-        async with curl_requests.AsyncSession(impersonate=self._impersonate, timeout=self._http_timeout) as s:
-            r = await s.post(LOGIN_URL, json=payload, headers=headers)
-            content_type = r.headers.get("content-type", "")
-            set_cookie_raw = r.headers.get("set-cookie", "")  # 'vr-token=...; Path=/; ...'
-            body = {}
-            try:
-                if "application/json" in content_type:
-                    body = r.json()
-                else:
-                    body = {"raw": r.text}
-            except Exception:
-                body = {"raw": r.text}
+        mode = str(self.options.get("turnstile_mode") or os.environ.get("VARIATIONAL_TURNSTILE_MODE") or "auto").lower()
+        attempts = int(_attempts if _attempts is not None else self.options.get("turnstile_attempts", 3))
+        attempts = max(1, attempts)
 
-            # 웹 로그인은 Cloudflare Turnstile(captchaToken / cf-turnstile-token)이 필수가 됨 → 여기선 403 challenge
-            if r.status_code == 403 and (r.headers.get("cf-mitigated") == "challenge" or "Just a moment" in str(body)):
-                raise RuntimeError(
-                    "login failed: 403 Cloudflare captcha(Turnstile) 필요. "
-                    "웹(omni.variational.io)에서 직접 로그인 후 쿠키 vr-token 값을 .env의 <NAME>_JWT_TOKEN에 넣으면 "
-                    "이후엔 /api/auth/refresh로 자동 갱신됨."
-                )
-            if r.status_code >= 400:
-                raise RuntimeError(f"login failed: {r.status_code}, body={str(body)[:300]}")
+        last: Optional[Dict[str, Any]] = None
+        for i in range(attempts):
+            cur = token if (i == 0 and token) else None
+            if cur is None and mode != "none":
+                try:
+                    cur = await self._solve_captcha(first=i == 0)
+                except Exception as e:  # noqa: BLE001 - 토큰 없이도 한 번은 시도
+                    print(f"[variational] turnstile 해결 실패: {e}")
 
-            # curl_cffi Response.cookies → dict 유사
-            cookie_jar = {}
-            try:
-                cookie_jar = {k: v for k, v in r.cookies.items()}
-            except Exception:
-                pass
-
-            return {
-                "status": r.status_code,
-                "json": body,
-                "set_cookie": set_cookie_raw,
-                "cookies": cookie_jar,
+            headers = {
+                "accept": "*/*",
+                "content-type": "application/json",
+                "vr-connected-address": addr,
             }
+            if cur:
+                headers["cf-turnstile-token"] = cur
+                headers["cf-turnstile-interactive"] = "true"
+            if self._cf_user_agent:
+                headers["user-agent"] = self._cf_user_agent
+            payload: Dict[str, Any] = {"address": addr, "signed_message": signed}
+            if nonce:
+                payload["nonce"] = nonce
+            code = str(self.options.get("referral_code") or "").strip()
+            if code:
+                payload["code"] = code.upper()
+            if cur:
+                payload["captchaToken"] = cur
+
+            cookies = dict(self._cf_cookies)  # cf_clearance / __cf_bm (엣지 챌린지 통과용)
+            async with curl_requests.AsyncSession(impersonate=self._impersonate, timeout=self._http_timeout) as s:
+                r = await s.post(LOGIN_URL, json=payload, headers=headers, cookies=cookies)
+                content_type = r.headers.get("content-type", "")
+                set_cookie_raw = r.headers.get("set-cookie", "")  # 'vr-token=...; Path=/; ...'
+                body: Any = {}
+                try:
+                    if "application/json" in content_type:
+                        body = r.json()
+                    else:
+                        body = {"raw": r.text}
+                except Exception:
+                    body = {"raw": r.text}
+
+                challenged = int(r.status_code) == 403 and (
+                    r.headers.get("cf-mitigated") == "challenge" or "Just a moment" in str(body)
+                )
+                if challenged:
+                    last = {"status": r.status_code, "challenged": True, "json": body}
+                    if i + 1 < attempts:
+                        print(f"[variational] 로그인 403 챌린지 → turnstile 재해결 후 재시도({i + 2}/{attempts})")
+                        # 쿠키/토큰이 낡았을 가능성 → 브라우저 상태를 다시 받아온다
+                        self._cf_cookies = {}
+                        self._cf_user_agent = None
+                        await asyncio.sleep(1.5)
+                        continue
+                    raise RuntimeError(
+                        "login failed: 403 Cloudflare challenge (Turnstile). "
+                        "브라우저 자동 해결이 막힌 환경이면 (1) `pip install patchright` 후 재시도, "
+                        "(2) options['turnstile_mode']='manual' + "
+                        "VARIATIONAL_TURNSTILE_TOKEN=<cf-turnstile-token 헤더 값>, "
+                        "(3) VARIATIONAL_TURNSTILE_CMD=<외부 해결 스크립트> 중 하나를 쓰세요. "
+                        "최후 수단은 웹에서 로그인 후 쿠키 vr-token 값을 넣는 것."
+                    )
+                if r.status_code >= 400:
+                    text = str(body)
+                    if "within 60 seconds" in text:
+                        raise RuntimeError(
+                            "login failed: 서명 메시지(SIWE)가 60초 안에 제출되지 않아 만료됐습니다. "
+                            "Turnstile 해결이 끝난 뒤 메시지를 발급하고, 서명은 바로 하세요. "
+                            "(웹 UI에서는 'Get Message'를 다시 누르면 됩니다)"
+                        )
+                    if "referral code" in text:
+                        raise RuntimeError(
+                            "login failed: 400 이 지갑은 Variational 신규 계정이라 추천/초대 코드가 필요합니다. "
+                            "options['referral_code'](또는 login(referral_code=...))로 코드를 넣거나, "
+                            "웹에서 한 번 가입한 뒤 로그인하세요."
+                        )
+                    raise RuntimeError(f"login failed: {r.status_code}, body={text[:300]}")
+
+                # curl_cffi Response.cookies → dict 유사
+                cookie_jar = {}
+                try:
+                    cookie_jar = {k: v for k, v in r.cookies.items()}
+                except Exception:
+                    pass
+
+                return {
+                    "status": r.status_code,
+                    "json": body,
+                    "set_cookie": set_cookie_raw,
+                    "cookies": cookie_jar,
+                }
+        raise RuntimeError(f"login failed: {last}")
+
+    async def _prepare_captcha(self) -> str:
+        """
+        Turnstile 미리 해결. SIWE 메시지 유효시간이 60초라서 **메시지 발급 전에** 풀어둬야 한다.
+        (해결에 ~70초 걸릴 수 있음)
+        """
+        return await self._solve_captcha(first=True)
+
+    async def _solve_captcha(self, *, first: bool = True) -> str:
+        """
+        Turnstile 토큰 확보(+ 통과용 쿠키/UA 보관).
+        수동 토큰(options['turnstile_token'] / env)은 단발성이라 첫 시도에서만 쓰고,
+        재시도부터는 브라우저 해결기로 넘긴다.
+        """
+        from . import variational_turnstile as ts
+
+        opts = dict(self.options)
+        manual = str(self.options.get("turnstile_token") or os.environ.get(ts.ENV_TOKEN) or "").strip()
+        if manual and first:
+            self._cf_cookies = {}
+            self._cf_user_agent = None
+            return manual
+        opts["turnstile_token"] = ""  # env 포함 수동 토큰 무시
+        sol = await ts.solve(opts)
+        self._cf_cookies = dict(sol.cookies or {})
+        self._cf_user_agent = sol.user_agent
+        return sol.token
 
     # ----------------------------
     # 로컬 웹서버(브라우저 지갑 서명)
@@ -209,6 +350,47 @@ class VariationalAuth:
         login_event = asyncio.Event()
         last_response: Dict[str, Any] = {}
 
+        # Turnstile 토큰을 신선하게 유지한다(토큰 수명 ~5분, 메시지 유효시간 60초).
+        # 롤링 갱신 덕분에 'Get Message' 는 대개 즉시 응답하고, 제출 시점에도 토큰이 살아 있다.
+        def _token_fresh() -> bool:
+            return bool(self._pre_token) and (time.time() - self._pre_token_at) < 180
+
+        def _kick_warm() -> None:
+            if self._pre_task is None or self._pre_task.done():
+                self._pre_task = asyncio.create_task(_warm())
+
+        async def _warm() -> None:
+            try:
+                tok = await self._prepare_captcha()
+            except Exception as e:  # noqa: BLE001
+                print(f"[variational] turnstile 사전 해결 실패: {e}")
+                return
+            self._pre_token = tok
+            self._pre_token_at = time.time()
+
+        async def _warm_loop() -> None:
+            while True:
+                if not _token_fresh():
+                    await _warm()
+                await asyncio.sleep(200.0 if self._pre_token else 15.0)
+
+        async def _await_token(limit: float = 180.0) -> Optional[str]:
+            """제출/발급 시점에 토큰이 필요 → 진행 중인 사전 해결을 기다리거나 지금 해결."""
+            if self._pre_task and not self._pre_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(self._pre_task), timeout=limit)
+                except Exception:
+                    pass
+            if _token_fresh():
+                return self._pre_token
+            try:
+                self._pre_token = await self._prepare_captcha()
+                self._pre_token_at = time.time()
+            except Exception as e:  # noqa: BLE001
+                print(f"[variational] turnstile 해결 실패: {e}")
+                return None
+            return self._pre_token
+
         async def handle_index(_req: web.Request):
             return web.Response(text=self._login_html(self.wallet_address), content_type="text/html")
 
@@ -216,13 +398,17 @@ class VariationalAuth:
             try:
                 q = req.rel_url.query
                 address = q.get("address") or ""
-                print(f"[variational] /signing-data called, address={address}")
                 if not address:
                     return web.json_response({"error": "missing address"}, status=400)
+                # 메시지는 60초만 유효 → 토큰을 먼저 확보한 뒤 발급(이미 신선하면 즉시).
+                if not _token_fresh():
+                    await _await_token()
                 data = await self._generate_signing_data_async(address)
-                print(f"[variational] signing data received: {data}")
                 msg = self._extract_message(data)
-                return web.json_response({"address": to_checksum_address(address), "message": msg, "raw": data})
+                self._pending_nonce = data.get("nonce")
+                return web.json_response(
+                    {"address": to_checksum_address(address), "message": msg, "nonce": self._pending_nonce, "raw": data}
+                )
             except Exception as e:
                 import traceback
                 print(f"[variational] ERROR in /signing-data: {e}")
@@ -238,7 +424,19 @@ class VariationalAuth:
                 if not (address and signed_message):
                     return web.json_response({"error": "missing address/signed_message"}, status=400)
 
-                resp = await self._login_request(address, signed_message)
+                # nonce: 방금 /signing-data에서 발급한 값(서명 대상과 짝). UI가 안 보내면 캐시 값 사용.
+                nonce = body.get("nonce") or self._pending_nonce
+                self._pending_nonce = None
+                # 토큰: 사전 해결된 것 우선(4분 이내). 없으면 여기서 기다린다.
+                token = self._pre_token if _token_fresh() else await _await_token()
+                self._pre_token = None
+                resp = await self._login_request(address, signed_message, nonce=nonce, token=token)
+                # 브라우저에서 연결한 지갑 주소가 인스턴스 주소와 다를 수 있다 → 세션 주소로 전환해
+                # 캐시를 실제 서명 지갑 기준으로 저장한다(아니면 엉뚱한 파일명에 저장됨).
+                if address.lower() != self.wallet_address.lower():
+                    print(f"[variational] 세션 주소 전환: {self.wallet_address} → {to_checksum_address(address)}")
+                    self.wallet_address = to_checksum_address(address)
+                    self._session_store_path = self._cache_path()
                 self._stash_login_response(resp)
                 self.save_cached_session()  # [CHANGED]
                 last_response = {"ok": True, **resp}
@@ -260,6 +458,8 @@ class VariationalAuth:
 
         url = f"http://127.0.0.1:{port}"
         print(f"[variational] 브라우저를 열고 {url} 에 접속하여 서명하세요.")
+        print("[variational] Turnstile을 미리 해결해 둡니다 (지갑 연결은 그동안 진행하면 됩니다)")
+        warm_task = asyncio.create_task(_warm_loop())
         print(f"[variational] WSL에서 Windows 브라우저 사용 시: http://<WSL_IP>:{port}")
         if open_browser:
             try:
@@ -267,7 +467,10 @@ class VariationalAuth:
             except Exception:
                 pass
 
-        await login_event.wait()
+        try:
+            await login_event.wait()
+        finally:
+            warm_task.cancel()
         await runner.cleanup()
         return last_response
 
@@ -443,6 +646,9 @@ class VariationalAuth:
     def _stash_login_response(self, login_resp: Dict[str, Any]) -> None:
         """
         로그인 응답(JSON token + Set-Cookie) 파싱
+
+        vr-ll-token(7일 refresh 쿠키)까지 반드시 보관한다. 이게 없으면 vr-token(5분)이
+        만료된 뒤 자동 갱신이 불가능하다.
         """
         # JSON body
         body = login_resp.get("json") or {}
@@ -451,25 +657,37 @@ class VariationalAuth:
             token = body.get("token") or body.get("accessToken") or body.get("access_token")
         self._token = token
 
-        # Set-Cookie 헤더에서 vr-token 추출
-        set_cookie_raw = login_resp.get("set_cookie") or ""
-        self._cookie_vr_token = self._extract_vr_token_from_set_cookie(set_cookie_raw)
+        # 쿠키: curl_cffi 응답 쿠키 dict 우선, 없으면 Set-Cookie 원문 파싱
+        jar = login_resp.get("cookies") or {}
+        vr = jar.get("vr-token") if isinstance(jar, dict) else None
+        ll = jar.get("vr-ll-token") if isinstance(jar, dict) else None
+        if not vr:
+            vr = self._extract_cookie_from_set_cookie(login_resp.get("set_cookie") or "", "vr-token")
+        if not ll:
+            ll = self._extract_cookie_from_set_cookie(login_resp.get("set_cookie") or "", "vr-ll-token")
+        self._cookie_vr_token = vr
+        if ll:
+            self._cookie_vr_ll_token = ll
         self._logged_in = bool(self._token)
 
     def _extract_vr_token_from_set_cookie(self, set_cookie_raw: str) -> Optional[str]:
         """
         'vr-token=....; Path=/; HttpOnly; ...' 형태에서 값만 분리
         """
+        return self._extract_cookie_from_set_cookie(set_cookie_raw, "vr-token")
+
+    def _extract_cookie_from_set_cookie(self, set_cookie_raw: str, name: str) -> Optional[str]:
+        """Set-Cookie 원문(여러 개, 쉼표 구분 포함)에서 name 쿠키 값만 분리"""
         if not set_cookie_raw:
             return None
-        parts = [p.strip() for p in set_cookie_raw.split(";")]
-        first = parts[0] if parts else ""
-        if first.lower().startswith("vr-token="):
-            return first.split("=", 1)[1]
+        prefix = name.lower() + "="
         for seg in set_cookie_raw.split(","):
-            seg = seg.strip()
-            if seg.lower().startswith("vr-token="):
-                return seg.split("=", 1)[1].split(";", 1)[0]
+            for part in seg.split(";"):
+                part = part.strip()
+                if part.lower().startswith(prefix):
+                    val = part.split("=", 1)[1].strip()
+                    if val:
+                        return val
         return None
 
     def _is_token_valid(self, jwt_token: str, leeway_sec: int = 30) -> bool:

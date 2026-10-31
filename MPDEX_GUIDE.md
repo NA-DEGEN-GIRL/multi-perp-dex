@@ -326,3 +326,33 @@ async def safe_order(ex, symbol, side, amount, price=None):
 3. **Use symbol_create** - Don't hardcode symbol formats
 4. **Check return values** - Most methods return dict with `ok` or `error` keys
 5. **Position size** - Can be negative (short) or positive (long) depending on exchange
+
+## Variational 로그인 (Cloudflare Turnstile)
+
+Variational 웹은 `/api/auth/login` 앞에 Cloudflare Managed Challenge + Turnstile을 걸어 놨다.
+그래서 서명만 만들어 POST하면 `403 cf-mitigated: challenge` 로 막힌다. `mpdex` 는 이걸 자동으로 푼다:
+
+- 웹 프론트와 동일하게 `cf-turnstile-token` 헤더 + 바디 `captchaToken` / `nonce` 를 붙인다.
+- 토큰은 **일반 Chrome을 직접 띄워 CDP로 붙여** 뽑는다(playwright 기본 `launch()` 는 챌린지가 안 풀림).
+  브라우저 프로필을 재사용하므로 한 번 통과하면 `cf_clearance` 가 남아 이후 로그인은 빠르다.
+- Turnstile은 SIWE 메시지 발급 **전에** 미리 해결한다(메시지 유효시간 60초).
+
+필요 사항:
+```bash
+pip install patchright        # Chrome은 시스템 설치본을 사용
+```
+환경변수/옵션으로 모드를 바꿀 수 있다:
+
+| 설정 | 설명 |
+|------|------|
+| `turnstile_mode=auto` | 기본. 수동 토큰 → 외부 명령 → 브라우저 순 |
+| `turnstile_mode=browser` | 브라우저 자동 해결만 |
+| `turnstile_mode=manual` + `VARIATIONAL_TURNSTILE_TOKEN` | DevTools에서 복사한 `cf-turnstile-token` 값 1회용 |
+| `turnstile_mode=cmd` + `VARIATIONAL_TURNSTILE_CMD` | capsolver/2captcha 스크립트(`{sitekey}`/`{url}` 치환, stdout 마지막 줄=토큰) |
+| `turnstile_headless=True` | 창 없이 시도(실패 시 headful 재시도) |
+| `VARIATIONAL_CHROME_PATH` | Chrome 실행 파일 경로 직접 지정 |
+| `VARIATIONAL_TURNSTILE_VERBOSE=1` | 해결 과정 로그 |
+
+로그인 성공 시 `.cache/variational_session_<address>.json` 에 `vr-token`(5분)과 `vr-ll-token`(7일)을
+저장하고, 이후에는 `/api/auth/refresh` 로 자동 갱신한다. 상세 동작은 `mpdex/exchanges/variational_turnstile.py`.
+

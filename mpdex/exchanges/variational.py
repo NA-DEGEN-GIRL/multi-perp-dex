@@ -272,11 +272,19 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         self.options.setdefault("auto_login_on_demand", True)  # 자동 로그인 허용 플래그
         self.options.setdefault("funding_interval_s", 3600) # 3600 으로 강제됨, 처음 받는 response와 달리 항시 3600
         self.options.setdefault("token_refresh_lead_s", 25) # vr-token(수명 5분) 만료 몇 초 전에 refresh (서버는 만료 30초 전부터 새 토큰 발급)
+        # 로그인 시 Cloudflare Turnstile 자동 해결(auto|browser|cmd|manual|none). 자세한 키는 variational_turnstile.solve 참조
+        self.options.setdefault("turnstile_mode", "auto")
+        self.options.setdefault("login_port", 7469)
         self._impersonate = self.options.get("impersonate", "chrome")
         self._timeout = float(self.options.get("timeout", 10.0))
         self.session_cookies = session_cookies
         # 로그인 도우미
-        self._auth = VariationalAuth(wallet_address=self.address, evm_private_key=self._pk, session_cookies=self.session_cookies)
+        self._auth = VariationalAuth(
+            wallet_address=self.address,
+            evm_private_key=self._pk,
+            session_cookies=self.session_cookies,
+            options=self.options,
+        )
         # 런타임 캐시
         #   self._rt_cache[coin.upper()] = {
         #     "instrument": {...},
