@@ -1,3 +1,19 @@
+import os
+
+# aiohttp DNS resolver 고정: aiodns(ccxt 의존성)가 설치돼 있으면 aiohttp 기본값이 c-ares(AsyncResolver)가 되는데,
+# c-ares는 OS DNS 캐시/폴백 없이 공유기 DNS에 직접 UDP 질의 → 간헐적
+# "Timeout while contacting DNS servers" 발생. OS getaddrinfo(ThreadedResolver)로 고정.
+# - 반드시 exchanges(TCPConnector 생성) import 전에 실행돼야 함
+# - 끄려면 MPDEX_AIODNS=1
+if os.getenv("MPDEX_AIODNS", "0") != "1":
+    try:
+        import aiohttp.connector as _aiohttp_connector
+        import aiohttp.resolver as _aiohttp_resolver
+        _aiohttp_resolver.DefaultResolver = _aiohttp_resolver.ThreadedResolver
+        _aiohttp_connector.DefaultResolver = _aiohttp_resolver.ThreadedResolver
+    except ImportError:
+        pass
+
 from mpdex.base import MultiPerpDex, MultiPerpDexMixin
 
 # exchange_factory의 함수들을 "지연 임포트"로 재노출
