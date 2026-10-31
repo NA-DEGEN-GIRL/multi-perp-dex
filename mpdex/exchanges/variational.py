@@ -253,7 +253,7 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         self.options.setdefault("min_price_refresh_ms", 500)  # 최소 
         self.options.setdefault("auto_login_on_demand", True)  # 자동 로그인 허용 플래그
         self.options.setdefault("funding_interval_s", 3600) # 3600 으로 강제됨, 처음 받는 response와 달리 항시 3600
-        self.options.setdefault("token_refresh_margin_s", 120) # vr-token(수명 5분, 만료 후 refresh 불가) 만료 몇 초 전에 refresh 할지
+        self.options.setdefault("token_refresh_delay_s", 2) # vr-token(수명 5분) 만료 몇 초 후 refresh 할지 (만료 전엔 같은 토큰이 옴)
         self._impersonate = self.options.get("impersonate", "chrome")
         self._timeout = float(self.options.get("timeout", 10.0))
         self.session_cookies = session_cookies
@@ -336,54 +336,50 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
                 return False
             if not new:
                 return False
-            # 서버가 아직 재발급 시점이 아니면 같은 토큰을 돌려줌(x-omni-auth='p') → 캐시 재기록 생략
+            # 만료 전 refresh는 서버가 같은 토큰을 그대로 돌려줌 → 캐시 재기록 생략
             if new != self._vr_token:
                 self._adopt_vr_token(new)
             return True
 
     async def _token_keepalive(self) -> None:
         """
-        시간 기반 백업 refresh (주 경로는 응답 헤더 x-omni-auth='r' → _schedule_refresh).
-        만료 token_refresh_margin_s초 전부터 token_refresh_retry_s 간격으로 시도,
-        같은 토큰이 오면(아직 재발급 전) 간격 두고 재시도. 만료 후 60초까지 못 바꾸면 중단.
+        웹 동작 기준: 웹은 401(x-omni-auth='r')을 받으면 refresh → 재시도. 만료 전 refresh는 같은 토큰,
+        만료 후 refresh는 같은 session_id의 새 토큰. (x-omni-auth: 'r'=인증된 요청, 'p'=비인증)
+        → 요청이 없어도 세션이 이어지도록 만료 token_refresh_delay_s초 후 refresh,
+          같은 토큰/실패면 token_refresh_retry_s 간격 재시도, 연속 실패 token_refresh_max_fail회면 중단.
         """
-        margin = float(self.options.get("token_refresh_margin_s", 120))
+        delay = float(self.options.get("token_refresh_delay_s", 2))
         retry = float(self.options.get("token_refresh_retry_s", 15))
-        grace = 60.0
-        warned = False
+        max_fail = int(self.options.get("token_refresh_max_fail", 8))
+        fails = 0
         while True:
             exp = _jwt_exp(self._vr_token)
             if exp is None:
                 await asyncio.sleep(60.0)
                 continue
             now = time.time()
-            if now < exp - margin:
-                await asyncio.sleep(exp - margin - now)
+            if now < exp + delay:
+                await asyncio.sleep(exp + delay - now)
                 continue
-            if now > exp + grace:
-                print("[variational] vr-token 만료로 refresh 불가. 웹 로그인 후 새 vr-token을 .env에 넣고 재시작 필요")
-                return
             before = self._vr_token
             ok = await self._refresh_vr_token()
             if ok and self._vr_token != before:
-                if warned:
+                if fails:
                     print("[variational] vr-token refresh 복구")
-                warned = False
+                fails = 0
                 continue
-            if not ok and not warned:
-                print("[variational] vr-token refresh 실패, 재시도 중")
-                warned = True
+            if not ok:
+                fails += 1
+                if fails == 1:
+                    print("[variational] vr-token refresh 실패, 재시도 중")
+                if fails >= max_fail:
+                    print("[variational] vr-token refresh 계속 실패(세션 종료). 웹 로그인 후 새 vr-token을 .env에 넣고 재시작 필요")
+                    return
             await asyncio.sleep(retry)
 
     def _start_token_keepalive(self) -> None:
         if self._refresh_task is None or self._refresh_task.done():
             self._refresh_task = asyncio.get_running_loop().create_task(self._token_keepalive())
-
-    def _schedule_refresh(self) -> None:
-        """응답 헤더 x-omni-auth='r'(서버의 refresh 요청) → 백그라운드 refresh 1개만"""
-        t = getattr(self, "_signal_refresh_task", None)
-        if t is None or t.done():
-            self._signal_refresh_task = asyncio.get_running_loop().create_task(self._refresh_vr_token())
 
     async def login(
         self,
@@ -423,11 +419,12 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
             self._session_ready = True
             return {"ok": True, "source": "cache"}
 
-        # 2.5) refresh: 만료 전 토큰만 가능(만료 토큰은 서버가 거부). 프로빙이 일시적으로 실패한 경우 대비
+        # 2.5) refresh: 토큰(5분)이 만료돼도 세션이 살아있으면 새 토큰 발급 (세션 종료 후엔 서버가 401)
         for tok, src in ((cached, "cache_refresh"), (candidate, "input_refresh")):
-            exp = _jwt_exp(tok)
-            if tok and exp and exp > time.time() and await self._refresh_vr_token(tok):
-                return {"ok": True, "source": src}
+            if tok and await self._refresh_vr_token(tok):
+                # 만료 전 토큰이면 같은 토큰이 올 수 있음 → 실제 유효성 확인
+                if await self._probe_cookie_valid(self._vr_token):
+                    return {"ok": True, "source": src}
 
         # 3) 자동 로그인
         if allow_auto:
@@ -554,9 +551,6 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
             # 401(인증 거부 = 요청 미처리) → refresh 후 1회 재시도 (웹과 동일)
             if int(r.status_code) == 401 and not _retried and await self._refresh_vr_token(cookies.get("vr-token")):
                 return await self._request(method, path, params=params, json_body=json_body, coin=coin, _retried=True)
-            # 웹과 동일: 서버가 x-omni-auth='r'을 주면 refresh 시점
-            if (r.headers or {}).get("x-omni-auth") == "r":
-                self._schedule_refresh()
             r.raise_for_status()
             ct = (r.headers or {}).get("content-type", "")
             try:
@@ -992,9 +986,7 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
 
     async def close(self):
         """No persistent session to close (token keepalive만 정리)"""
-        tasks = [self._refresh_task, getattr(self, "_signal_refresh_task", None)]
-        self._refresh_task = self._signal_refresh_task = None
-        for task in tasks:
-            if task and not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+        task, self._refresh_task = self._refresh_task, None
+        if task and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
