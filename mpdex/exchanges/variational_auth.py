@@ -391,6 +391,8 @@ class VariationalAuth:
             "address": self.wallet_address,
             "token": self._token,
             "cookie_vr_token": self._cookie_vr_token,
+            # vr-ll-token: 7일짜리 refresh용 쿠키(HttpOnly). 이게 있어야 /api/auth/refresh가 새 vr-token 발급
+            "cookie_vr_ll_token": getattr(self, "_cookie_vr_ll_token", None),
             "saved_at": int(time.time()),
         }
         try:
@@ -420,6 +422,7 @@ class VariationalAuth:
                 if tok and self._is_token_valid(tok):
                     self._token = tok
                 self._cookie_vr_token = data.get("cookie_vr_token")
+                self._cookie_vr_ll_token = data.get("cookie_vr_ll_token")
                 # 레거시에서 읽었다면 즉시 현재 경로로 동기화 저장
                 if path == legacy and path != primary:
                     self._session_store_path = primary
