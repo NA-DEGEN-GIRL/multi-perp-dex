@@ -1,5 +1,6 @@
 from mpdex.base import MultiPerpDex, MultiPerpDexMixin
 import asyncio
+import base64
 from typing import Optional, Dict, Any, List, Tuple
 import os
 import json
@@ -22,6 +23,7 @@ ENDPOINTS: Dict[str, Tuple[str, str]] = {
     "indicative_quote": ("POST", "/api/quotes/indicative"),
     "cancel_order": ("POST", "/api/orders/cancel"),
     "logout": ("GET", "/api/auth/logout"),
+    "refresh": ("POST", "/api/auth/refresh"), # 웹과 동일: 기존 vr-token 쿠키로 새 토큰 발급(같은 session_id)
 }
 
 
@@ -79,6 +81,16 @@ def _load_vr_token_from_cache(address: str) -> Optional[str]:
         except Exception:
             continue
     return None
+
+
+# JWT exp(초) 추출, 서명 검증 없음
+def _jwt_exp(token: Optional[str]) -> Optional[int]:
+    try:
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        return int(json.loads(base64.urlsafe_b64decode(payload_b64)).get("exp"))
+    except Exception:
+        return None
 
 
 # indicative quote 정제
@@ -241,6 +253,7 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         self.options.setdefault("min_price_refresh_ms", 500)  # 최소 
         self.options.setdefault("auto_login_on_demand", True)  # 자동 로그인 허용 플래그
         self.options.setdefault("funding_interval_s", 3600) # 3600 으로 강제됨, 처음 받는 response와 달리 항시 3600
+        self.options.setdefault("token_refresh_margin_s", 60) # vr-token(수명 5분) 만료 몇 초 전에 refresh 할지
         self._impersonate = self.options.get("impersonate", "chrome")
         self._timeout = float(self.options.get("timeout", 10.0))
         self.session_cookies = session_cookies
@@ -261,6 +274,8 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         # 세션 상태(초기화/로그인 이후에는 캐시만 사용)
         self._session_ready: bool = False
         self._vr_token: Optional[str] = None  # 메모리 보관
+        self._refresh_lock = asyncio.Lock()
+        self._refresh_task: Optional[asyncio.Task] = None
         self._last_viewed_coin: str = "BTC"  # referer용 기본 코인 (get_orderbook 호출 시 업데이트)
 
     def get_perp_quote(self, symbol, *, is_basic_coll=False):
@@ -280,6 +295,70 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         async with curl_requests.AsyncSession(impersonate=self._impersonate, timeout=self._timeout) as s:
             r = await s.get(url, headers=headers, cookies=cookies)
             return int(r.status_code) == 200
+
+    # ---------------------------
+    # vr-token refresh (웹과 동일 방식, 개인키 불필요)
+    # ---------------------------
+    def _adopt_vr_token(self, vr_token: str) -> None:
+        self._vr_token = vr_token
+        self.session_cookies = {"vr-token": vr_token}
+        self._session_ready = True
+        # 재시작 시 이어쓰도록 .cache에 저장
+        self._auth._cookie_vr_token = vr_token  # noqa: SLF001
+        self._auth._token = vr_token  # noqa: SLF001
+        self._auth.save_cached_session()
+
+    async def _refresh_vr_token(self, vr_token: Optional[str] = None) -> bool:
+        """
+        POST /api/auth/refresh (기존 vr-token 쿠키) → 같은 session_id의 새 토큰.
+        vr_token: 갱신에 쓸 토큰(기본: 현재 토큰). 대기 중 다른 코루틴이 이미 갱신했으면 그대로 성공 처리.
+        """
+        old = vr_token or self._vr_token
+        if not old:
+            return False
+        async with self._refresh_lock:
+            if self._vr_token and self._vr_token != old:
+                return True
+            method, path = ENDPOINTS["refresh"]
+            headers = {
+                "accept": "*/*",
+                "content-type": "application/json",
+                "vr-connected-address": self.address,
+                "origin": BASE_URL,
+            }
+            try:
+                async with curl_requests.AsyncSession(impersonate=self._impersonate, timeout=self._timeout) as s:
+                    r = await s.request(method, BASE_URL + path, headers=headers, cookies={"vr-token": old})
+                if int(r.status_code) != 200:
+                    return False
+                new = (r.json() or {}).get("token")
+            except Exception:
+                return False
+            if not new:
+                return False
+            self._adopt_vr_token(new)
+            return True
+
+    async def _token_keepalive(self) -> None:
+        """만료 token_refresh_margin_s초 전에 refresh. 실패 시 백오프 재시도."""
+        margin = float(self.options.get("token_refresh_margin_s", 60))
+        fails = 0
+        while True:
+            exp = _jwt_exp(self._vr_token)
+            wait = (exp - time.time() - margin) if exp else 60.0
+            await asyncio.sleep(max(wait, 5.0) if fails == 0 else min(10.0 * fails, 60.0))
+            if await self._refresh_vr_token():
+                if fails:
+                    print("[variational] vr-token refresh 복구")
+                fails = 0
+            else:
+                fails += 1
+                if fails == 1:
+                    print("[variational] vr-token refresh 실패, 재시도 중 (세션 만료 시 재로그인 필요)")
+
+    def _start_token_keepalive(self) -> None:
+        if self._refresh_task is None or self._refresh_task.done():
+            self._refresh_task = asyncio.get_running_loop().create_task(self._token_keepalive())
 
     async def login(
         self,
@@ -318,6 +397,11 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
             self._vr_token = cached
             self._session_ready = True
             return {"ok": True, "source": "cache"}
+
+        # 2.5) refresh: 토큰 수명(5분)이 지나도 세션이 살아있으면 새 토큰 발급 (캐시가 최신일 가능성↑)
+        for tok, src in ((cached, "cache_refresh"), (candidate, "input_refresh")):
+            if tok and await self._refresh_vr_token(tok):
+                return {"ok": True, "source": src}
 
         # 3) 자동 로그인
         if allow_auto:
@@ -429,7 +513,7 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
     # ---------------------------
     # 내부: HTTP 호출
     # ---------------------------
-    async def _request(self, method: str, path: str, *, params=None, json_body=None, coin: Optional[str] = None) -> Any:
+    async def _request(self, method: str, path: str, *, params=None, json_body=None, coin: Optional[str] = None, _retried: bool = False) -> Any:
         headers, cookies = await self._headers_and_cookies(coin=coin)
         url = BASE_URL + path
         async with curl_requests.AsyncSession(impersonate=self._impersonate, timeout=self._timeout) as s:
@@ -441,6 +525,9 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
                 r = await s.put(url, json=json_body, headers=headers, cookies=cookies)
             else:
                 r = await s.request(method.upper(), url, params=params, json=json_body, headers=headers, cookies=cookies)
+            # 401(인증 거부 = 요청 미처리) → refresh 후 1회 재시도 (웹과 동일)
+            if int(r.status_code) == 401 and not _retried and await self._refresh_vr_token(cookies.get("vr-token")):
+                return await self._request(method, path, params=params, json_body=json_body, coin=coin, _retried=True)
             r.raise_for_status()
             ct = (r.headers or {}).get("content-type", "")
             try:
@@ -509,6 +596,7 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         # 세션 토큰 메모리 고정
         self._vr_token = _extract_vr_token_from_cookies(self.session_cookies) or _load_vr_token_from_cache(self.address)
         self._session_ready = True
+        self._start_token_keepalive()
 
         # 2) supported_assets
         method, path = ENDPOINTS["supported_assets"]
@@ -874,5 +962,8 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         return await super().close_position(symbol, position, is_reduce_only=is_reduce_only)
 
     async def close(self):
-        """No persistent session to close"""
-        pass
+        """No persistent session to close (token keepalive만 정리)"""
+        task, self._refresh_task = self._refresh_task, None
+        if task and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

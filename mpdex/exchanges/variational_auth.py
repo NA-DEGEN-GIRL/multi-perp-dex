@@ -172,8 +172,15 @@ class VariationalAuth:
             except Exception:
                 body = {"raw": r.text}
 
+            # 웹 로그인은 Cloudflare Turnstile(captchaToken / cf-turnstile-token)이 필수가 됨 → 여기선 403 challenge
+            if r.status_code == 403 and (r.headers.get("cf-mitigated") == "challenge" or "Just a moment" in str(body)):
+                raise RuntimeError(
+                    "login failed: 403 Cloudflare captcha(Turnstile) 필요. "
+                    "웹(omni.variational.io)에서 직접 로그인 후 쿠키 vr-token 값을 .env의 <NAME>_JWT_TOKEN에 넣으면 "
+                    "이후엔 /api/auth/refresh로 자동 갱신됨."
+                )
             if r.status_code >= 400:
-                raise RuntimeError(f"login failed: {r.status_code}, body={body}")
+                raise RuntimeError(f"login failed: {r.status_code}, body={str(body)[:300]}")
 
             # curl_cffi Response.cookies → dict 유사
             cookie_jar = {}
