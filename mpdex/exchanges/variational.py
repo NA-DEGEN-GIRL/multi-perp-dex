@@ -253,7 +253,7 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
         self.options.setdefault("min_price_refresh_ms", 500)  # 최소 
         self.options.setdefault("auto_login_on_demand", True)  # 자동 로그인 허용 플래그
         self.options.setdefault("funding_interval_s", 3600) # 3600 으로 강제됨, 처음 받는 response와 달리 항시 3600
-        self.options.setdefault("token_refresh_margin_s", 60) # vr-token(수명 5분) 만료 몇 초 전에 refresh 할지
+        self.options.setdefault("token_refresh_margin_s", 120) # vr-token(수명 5분, 만료 후 refresh 불가) 만료 몇 초 전에 refresh 할지
         self._impersonate = self.options.get("impersonate", "chrome")
         self._timeout = float(self.options.get("timeout", 10.0))
         self.session_cookies = session_cookies
@@ -340,21 +340,31 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
             return True
 
     async def _token_keepalive(self) -> None:
-        """만료 token_refresh_margin_s초 전에 refresh. 실패 시 백오프 재시도."""
-        margin = float(self.options.get("token_refresh_margin_s", 60))
+        """
+        만료 token_refresh_margin_s초 전에 refresh.
+        만료된 토큰은 refresh 불가 → 실패 시 만료 전까지 5초 간격 재시도, 만료되면 중단(웹 재로그인 필요).
+        """
+        margin = float(self.options.get("token_refresh_margin_s", 120))
         fails = 0
         while True:
             exp = _jwt_exp(self._vr_token)
-            wait = (exp - time.time() - margin) if exp else 60.0
-            await asyncio.sleep(max(wait, 5.0) if fails == 0 else min(10.0 * fails, 60.0))
+            if fails == 0:
+                wait = (exp - time.time() - margin) if exp else 60.0
+                await asyncio.sleep(max(wait, 1.0))
+            else:
+                await asyncio.sleep(5.0)
             if await self._refresh_vr_token():
                 if fails:
                     print("[variational] vr-token refresh 복구")
                 fails = 0
-            else:
-                fails += 1
-                if fails == 1:
-                    print("[variational] vr-token refresh 실패, 재시도 중 (세션 만료 시 재로그인 필요)")
+                continue
+            fails += 1
+            if fails == 1:
+                print("[variational] vr-token refresh 실패, 만료 전까지 재시도")
+            exp = _jwt_exp(self._vr_token)
+            if exp and exp <= time.time():
+                print("[variational] vr-token 만료로 refresh 불가. 웹 로그인 후 새 vr-token을 .env에 넣고 재시작 필요")
+                return
 
     def _start_token_keepalive(self) -> None:
         if self._refresh_task is None or self._refresh_task.done():
@@ -398,9 +408,10 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
             self._session_ready = True
             return {"ok": True, "source": "cache"}
 
-        # 2.5) refresh: 토큰 수명(5분)이 지나도 세션이 살아있으면 새 토큰 발급 (캐시가 최신일 가능성↑)
+        # 2.5) refresh: 만료 전 토큰만 가능(만료 토큰은 서버가 거부). 프로빙이 일시적으로 실패한 경우 대비
         for tok, src in ((cached, "cache_refresh"), (candidate, "input_refresh")):
-            if tok and await self._refresh_vr_token(tok):
+            exp = _jwt_exp(tok)
+            if tok and exp and exp > time.time() and await self._refresh_vr_token(tok):
                 return {"ok": True, "source": src}
 
         # 3) 자동 로그인
