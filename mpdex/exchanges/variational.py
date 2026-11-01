@@ -506,11 +506,28 @@ class VariationalExchange(MultiPerpDexMixin, MultiPerpDex):
                 print("로그인이 필요합니다. 아래 나오는 로컬서버를 열고 지갑 서명을 진행하쇼.")
                 port = int(self.options.get("login_port", 7469))
                 await self._auth.login(port=port, open_browser=True)
+            # 다른 지갑으로 서명하면 토큰/캐시가 그 지갑 기준 → 이 인스턴스(vr-connected-address)와 불일치
+            signed_addr = getattr(self._auth, "wallet_address", self.address)
+            if signed_addr.lower() != self.address.lower():
+                return {
+                    "ok": False,
+                    "error": "wallet_mismatch",
+                    "message": f"설정 지갑({self.address})이 아닌 {signed_addr}로 서명함. 같은 지갑으로 다시 로그인하세요.",
+                }
             new_vr = _load_vr_token_from_cache(self.address)
             if new_vr and await self._probe_cookie_valid(new_vr):
                 self.session_cookies = {"vr-token": new_vr}
                 self._vr_token = new_vr
                 self._session_ready = True
+                # 로그인 응답의 vr-ll-token(7일)도 받아와야 이후 refresh가 됨
+                ll = _load_vr_ll_token_from_cache(self.address)
+                if ll:
+                    self._ll_token = ll
+                    if ll in self._ll_candidates:
+                        self._ll_candidates.remove(ll)
+                    self._ll_candidates.insert(0, ll)
+                else:
+                    print("[variational] 로그인 응답에 vr-ll-token 없음 → 5분 후 세션 끊길 수 있음")
                 return {"ok": True, "source": "auto_login"}
             return {"ok": False, "error": "auto_login_failed"}
         return {"ok": False, "error": "no_valid_cookie_and_auto_disabled"}
