@@ -213,7 +213,7 @@ class VariationalAuth:
         addr = to_checksum_address(address)
         signed = signed_message[2:] if signed_message.startswith("0x") else signed_message
 
-        mode = str(self.options.get("turnstile_mode") or os.environ.get("VARIATIONAL_TURNSTILE_MODE") or "auto").lower()
+        mode = self._captcha_mode()
         attempts = int(_attempts if _attempts is not None else self.options.get("turnstile_attempts", 3))
         attempts = max(1, attempts)
 
@@ -310,28 +310,35 @@ class VariationalAuth:
                 }
         raise RuntimeError(f"login failed: {last}")
 
-    async def _prepare_captcha(self) -> str:
+    def _captcha_mode(self) -> str:
+        return str(
+            self.options.get("turnstile_mode") or os.environ.get("VARIATIONAL_TURNSTILE_MODE") or "auto"
+        ).strip().lower()
+
+    async def _prepare_captcha(self) -> Optional[str]:
         """
         Turnstile 미리 해결. SIWE 메시지 유효시간이 60초라서 **메시지 발급 전에** 풀어둬야 한다.
         (해결에 ~70초 걸릴 수 있음)
         """
         return await self._solve_captcha(first=True)
 
-    async def _solve_captcha(self, *, first: bool = True) -> str:
+    async def _solve_captcha(self, *, first: bool = True) -> Optional[str]:
         """
         Turnstile 토큰 확보(+ 통과용 쿠키/UA 보관).
         수동 토큰(options['turnstile_token'] / env)은 단발성이라 첫 시도에서만 쓰고,
-        재시도부터는 브라우저 해결기로 넘긴다.
+        재시도부터는 선택된 모드로 새 토큰을 구한다(auto는 외부 명령/브라우저로 폴백).
         """
         from . import variational_turnstile as ts
 
-        opts = dict(self.options)
-        manual = str(self.options.get("turnstile_token") or os.environ.get(ts.ENV_TOKEN) or "").strip()
-        if manual and first:
+        mode = self._captcha_mode()
+        if mode == "none":
             self._cf_cookies = {}
             self._cf_user_agent = None
-            return manual
-        opts["turnstile_token"] = ""  # env 포함 수동 토큰 무시
+            return None
+        opts = dict(self.options)
+        # 첫 시도에서도 solve의 모드/환경변수 우선순위를 그대로 따른다.
+        if not first:
+            opts["turnstile_token"] = ""  # 사용한 수동 토큰을 다시 제출하지 않는다.
         sol = await ts.solve(opts)
         self._cf_cookies = dict(sol.cookies or {})
         self._cf_user_agent = sol.user_agent
@@ -352,44 +359,36 @@ class VariationalAuth:
 
         # Turnstile 토큰을 신선하게 유지한다(토큰 수명 ~5분, 메시지 유효시간 60초).
         # 롤링 갱신 덕분에 'Get Message' 는 대개 즉시 응답하고, 제출 시점에도 토큰이 살아 있다.
-        def _token_fresh() -> bool:
-            return bool(self._pre_token) and (time.time() - self._pre_token_at) < 180
+        def _token_fresh(max_age: float = 180.0) -> bool:
+            return bool(self._pre_token) and (time.monotonic() - self._pre_token_at) < max_age
 
         def _kick_warm() -> None:
             if self._pre_task is None or self._pre_task.done():
                 self._pre_task = asyncio.create_task(_warm())
 
-        async def _warm() -> None:
-            try:
-                tok = await self._prepare_captcha()
-            except Exception as e:  # noqa: BLE001
-                print(f"[variational] turnstile 사전 해결 실패: {e}")
-                return
+        async def _warm() -> Optional[str]:
+            tok = await self._prepare_captcha()
             self._pre_token = tok
-            self._pre_token_at = time.time()
+            self._pre_token_at = time.monotonic()
+            return tok
 
         async def _warm_loop() -> None:
             while True:
-                if not _token_fresh():
-                    await _warm()
-                await asyncio.sleep(200.0 if self._pre_token else 15.0)
-
-        async def _await_token(limit: float = 180.0) -> Optional[str]:
-            """제출/발급 시점에 토큰이 필요 → 진행 중인 사전 해결을 기다리거나 지금 해결."""
-            if self._pre_task and not self._pre_task.done():
                 try:
-                    await asyncio.wait_for(asyncio.shield(self._pre_task), timeout=limit)
-                except Exception:
-                    pass
+                    await _await_token()
+                except Exception as e:  # noqa: BLE001
+                    print(f"[variational] turnstile 사전 해결 실패: {e}")
+                await asyncio.sleep(180.0 if self._pre_token else 30.0)
+
+        async def _await_token() -> Optional[str]:
+            """모든 요청이 같은 해결 작업을 기다린다. 시간 제한은 해결기가 관리한다."""
+            if self._captcha_mode() == "none":
+                return None
             if _token_fresh():
                 return self._pre_token
-            try:
-                self._pre_token = await self._prepare_captcha()
-                self._pre_token_at = time.time()
-            except Exception as e:  # noqa: BLE001
-                print(f"[variational] turnstile 해결 실패: {e}")
-                return None
-            return self._pre_token
+            _kick_warm()
+            # 한 HTTP 요청의 취소가 다른 요청이 기다리는 해결 작업을 취소하면 안 된다.
+            return await asyncio.shield(self._pre_task)
 
         async def handle_index(_req: web.Request):
             return web.Response(text=self._login_html(self.wallet_address), content_type="text/html")
@@ -401,8 +400,7 @@ class VariationalAuth:
                 if not address:
                     return web.json_response({"error": "missing address"}, status=400)
                 # 메시지는 60초만 유효 → 토큰을 먼저 확보한 뒤 발급(이미 신선하면 즉시).
-                if not _token_fresh():
-                    await _await_token()
+                await _await_token()
                 data = await self._generate_signing_data_async(address)
                 msg = self._extract_message(data)
                 self._pending_nonce = data.get("nonce")
@@ -424,11 +422,14 @@ class VariationalAuth:
                 if not (address and signed_message):
                     return web.json_response({"error": "missing address/signed_message"}, status=400)
 
+                # 서명한 뒤에는 오래 걸리는 해결기를 새로 시작하지 않는다.
+                # 발급 시점보다 여유를 줘, 서명 도중 180초 경계를 지나도 기존 토큰을 쓴다.
+                if self._captcha_mode() != "none" and not _token_fresh(max_age=240.0):
+                    raise RuntimeError("Turnstile 토큰이 만료됐습니다. 'Get Message'를 다시 누른 뒤 서명하세요.")
                 # nonce: 방금 /signing-data에서 발급한 값(서명 대상과 짝). UI가 안 보내면 캐시 값 사용.
                 nonce = body.get("nonce") or self._pending_nonce
                 self._pending_nonce = None
-                # 토큰: 사전 해결된 것 우선(4분 이내). 없으면 여기서 기다린다.
-                token = self._pre_token if _token_fresh() else await _await_token()
+                token = self._pre_token
                 self._pre_token = None
                 resp = await self._login_request(address, signed_message, nonce=nonce, token=token)
                 # 브라우저에서 연결한 지갑 주소가 인스턴스 주소와 다를 수 있다 → 세션 주소로 전환해
@@ -452,26 +453,34 @@ class VariationalAuth:
         app.router.add_post("/submit", handle_submit)
 
         runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", port)
-        await site.start()
-
-        url = f"http://127.0.0.1:{port}"
-        print(f"[variational] 브라우저를 열고 {url} 에 접속하여 서명하세요.")
-        print("[variational] Turnstile을 미리 해결해 둡니다 (지갑 연결은 그동안 진행하면 됩니다)")
-        warm_task = asyncio.create_task(_warm_loop())
-        print(f"[variational] WSL에서 Windows 브라우저 사용 시: http://<WSL_IP>:{port}")
-        if open_browser:
-            try:
-                webbrowser.open(url)
-            except Exception:
-                pass
-
+        warm_task: Optional[asyncio.Task] = None
         try:
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+
+            url = f"http://127.0.0.1:{port}"
+            print(f"[variational] 브라우저를 열고 {url} 에 접속하여 서명하세요.")
+            if self._captcha_mode() != "none":
+                print("[variational] Turnstile을 미리 해결해 둡니다 (지갑 연결은 그동안 진행하면 됩니다)")
+                warm_task = asyncio.create_task(_warm_loop())
+            print(f"[variational] WSL에서 Windows 브라우저 사용 시: http://<WSL_IP>:{port}")
+            if open_browser:
+                try:
+                    webbrowser.open(url)
+                except Exception:
+                    pass
             await login_event.wait()
         finally:
-            warm_task.cancel()
-        await runner.cleanup()
+            # Windows Proactor의 accept 작업도 이벤트 루프가 살아 있을 때 닫는다.
+            tasks = [task for task in (warm_task, self._pre_task) if task is not None]
+            for task in tasks:
+                task.cancel()
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                self._pre_task = None
+                await runner.cleanup()
         return last_response
 
     # ----------------------------

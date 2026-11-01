@@ -336,6 +336,8 @@ Variational 웹은 `/api/auth/login` 앞에 Cloudflare Managed Challenge + Turns
 - 토큰은 **일반 Chrome을 직접 띄워 CDP로 붙여** 뽑는다(playwright 기본 `launch()` 는 챌린지가 안 풀림).
   브라우저 프로필을 재사용하므로 한 번 통과하면 `cf_clearance` 가 남아 이후 로그인은 빠르다.
 - Turnstile은 SIWE 메시지 발급 **전에** 미리 해결한다(메시지 유효시간 60초).
+- 사전 해결과 `Get Message` 요청은 같은 작업을 기다린다. 로그인 취소 시 해결 작업과 로컬 서버도 종료한다.
+- 공용 Chrome 프로필이 사용 중이면 독립된 임시 프로필로 재시도한다. 다른 실행의 Chrome을 강제 종료하지 않는다.
 
 필요 사항:
 ```bash
@@ -349,9 +351,13 @@ pip install patchright        # Chrome은 시스템 설치본을 사용
 | `turnstile_mode=browser` | 브라우저 자동 해결만 |
 | `turnstile_mode=manual` + `VARIATIONAL_TURNSTILE_TOKEN` | DevTools에서 복사한 `cf-turnstile-token` 값 1회용 |
 | `turnstile_mode=cmd` + `VARIATIONAL_TURNSTILE_CMD` | capsolver/2captcha 스크립트(`{sitekey}`/`{url}` 치환, stdout 마지막 줄=토큰) |
+| `turnstile_mode=none` | Turnstile 해결을 건너뛰고 로그인 요청(서버가 챌린지를 요구하면 실패) |
+| `VARIATIONAL_TURNSTILE_MODE` | `turnstile_mode` 옵션을 지정하지 않았을 때 사용할 모드 |
 | `turnstile_headless=True` | 창 없이 시도(실패 시 headful 재시도) |
 | `VARIATIONAL_CHROME_PATH` | Chrome 실행 파일 경로 직접 지정 |
 | `VARIATIONAL_TURNSTILE_VERBOSE=1` | 해결 과정 로그 |
+
+CDP 연결이 실패하면 시간 초과나 연결 거부 등 원래 오류도 함께 출력한다.
 
 로그인 성공 시 `.cache/variational_session_<address>.json` 에 `vr-token`(5분)과 `vr-ll-token`(7일)을
 저장하고, 이후에는 `/api/auth/refresh` 로 자동 갱신한다. 상세 동작은 `mpdex/exchanges/variational_turnstile.py`.

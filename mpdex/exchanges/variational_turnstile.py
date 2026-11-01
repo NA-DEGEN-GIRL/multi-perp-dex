@@ -41,8 +41,10 @@ POST하면 ``403 cf-mitigated: challenge`` ("Just a moment...")로 막힌다. �
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -51,7 +53,7 @@ import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
 ORIGIN = "https://omni.variational.io"
@@ -133,6 +135,8 @@ async def solve(
         )
 
     cmd = (opts.get("turnstile_cmd") or os.environ.get(ENV_CMD) or "").strip()
+    if mode == "cmd" and not cmd:
+        raise TurnstileError(f"외부 해결 명령 없음: {ENV_CMD} 또는 options['turnstile_cmd']을 설정하세요.")
     if cmd and mode in ("auto", "cmd"):
         try:
             return await _solve_cmd(cmd, action=action)
@@ -205,7 +209,7 @@ def _free_port() -> int:
 
 
 def _kill(proc: Optional[subprocess.Popen]) -> None:
-    if proc is None:
+    if proc is None or proc.poll() is not None:
         return
     try:
         proc.terminate()
@@ -213,36 +217,12 @@ def _kill(proc: Optional[subprocess.Popen]) -> None:
     except Exception:
         try:
             proc.kill()
+            proc.wait(timeout=5)
         except Exception:
             pass
 
 
-def _kill_profile_chrome(profile: Path) -> None:
-    """
-    같은 user_data_dir 를 물고 있는 좀비 chrome 정리.
-
-    같은 프로필로 chrome을 다시 띄우면 기존 인스턴스에 붙어 버려 디버그 포트가 열리지 않는다.
-    """
-    if sys.platform != "win32":
-        return
-    target = str(profile).replace("'", "''")
-    ps = (
-        "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
-        f"Where-Object {{ $_.CommandLine -like '*{target}*' }} | "
-        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
-    )
-    try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=25,
-        )
-    except Exception:
-        pass
-
-
-def _start_chrome(port: int, profile: Path, headless: bool) -> Optional[subprocess.Popen]:
+def _launch_chrome(port: int, profile: Path, headless: bool) -> subprocess.Popen:
     exe = _chrome_path()
     if not exe:
         raise TurnstileError(describe_unavailable())
@@ -262,17 +242,50 @@ def _start_chrome(port: int, profile: Path, headless: bool) -> Optional[subproce
     kw: Dict[str, Any] = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     if sys.platform == "win32":
         kw["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-    proc = subprocess.Popen(args, **kw)  # type: ignore[arg-type]
-    for _ in range(80):
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1) as r:
-                if r.status == 200:
-                    return proc
-        except Exception:
+    return subprocess.Popen(args, **kw)  # type: ignore[arg-type]
+
+
+def _read_debugger_url(port: int) -> str:
+    # 로컬 CDP 조회가 HTTP_PROXY 등의 영향을 받지 않게 한다.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(f"http://127.0.0.1:{port}/json/version", timeout=1) as response:
+        data = json.load(response)
+    endpoint = data.get("webSocketDebuggerUrl")
+    if not isinstance(endpoint, str) or not endpoint.startswith("ws://"):
+        raise TurnstileError("Chrome 응답에 webSocketDebuggerUrl이 없습니다")
+    return endpoint
+
+
+async def _start_chrome(
+    port: int, profile: Path, headless: bool, deadline: float
+) -> Tuple[subprocess.Popen, str]:
+    """실행/포트 확인은 이벤트 루프 밖에서 처리하고 실패/취소 시 자식 프로세스를 회수한다."""
+    loop = asyncio.get_running_loop()
+    launch = loop.run_in_executor(None, _launch_chrome, port, profile, headless)
+    proc = None
+    try:
+        # 취소돼도 실행 스레드가 반환하는 Popen을 받아 정리할 수 있어야 한다.
+        proc = await asyncio.shield(launch)
+        startup_deadline = min(deadline, time.monotonic() + 30.0)
+        last_err: Optional[Exception] = None
+        while time.monotonic() < startup_deadline:
             if proc.poll() is not None:
-                return None
-            time.sleep(0.2)
-    return None
+                raise TurnstileError(f"Chrome이 디버그 포트를 열기 전에 종료됨(code={proc.returncode})")
+            try:
+                endpoint = await loop.run_in_executor(None, _read_debugger_url, port)
+                return proc, endpoint
+            except Exception as e:
+                last_err = e
+            await asyncio.sleep(0.2)
+        raise TurnstileError(f"Chrome 디버그 포트 응답 시간 초과: {last_err}")
+    except BaseException:
+        if proc is None:
+            try:
+                proc = await launch
+            except Exception:
+                pass
+        await loop.run_in_executor(None, _kill, proc)
+        raise
 
 
 # ----------------------------------------------------------------------------
@@ -286,9 +299,13 @@ async def _solve_cmd(cmd: str, *, action: str) -> CaptchaSolution:
     )
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=180)
-    except asyncio.TimeoutError:
-        proc.kill()
-        raise TurnstileError("turnstile_cmd 시간초과(180s)") from None
+    except (asyncio.TimeoutError, asyncio.CancelledError) as e:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.communicate()
+        if isinstance(e, asyncio.TimeoutError):
+            raise TurnstileError("turnstile_cmd 시간초과(180s)") from None
+        raise
     if proc.returncode != 0:
         tail = (err or b"").decode("utf-8", "replace").strip()[-300:]
         raise TurnstileError(f"turnstile_cmd 종료코드 {proc.returncode}: {tail}")
@@ -308,59 +325,60 @@ async def _solve_browser(
         raise TurnstileError(describe_unavailable())
     from patchright.async_api import async_playwright
 
-    deadline = time.monotonic() + max(90.0, timeout_s)
-    pdir = Path(profile_dir) if profile_dir else _default_profile_dir()
+    deadline = time.monotonic() + max(1.0, timeout_s)
+    pdir = (Path(profile_dir) if profile_dir else _default_profile_dir()).resolve()
+    loop = asyncio.get_running_loop()
     last_err: Optional[BaseException] = None
 
     for attempt in range(2):
         if time.monotonic() >= deadline:
             break
-        # 1차: 공용 프로필(따뜻한 cf_clearance 재사용) / 2차: 프로세스 전용 프로필(잠금 충돌 회피)
-        prof = pdir if attempt == 0 else pdir.with_name(f"{pdir.name}_p{os.getpid()}")
-        _kill_profile_chrome(prof)
-        port = _free_port()
-        proc = _start_chrome(port, prof, headless)
-        if not proc:
-            await asyncio.sleep(1.0)
-            _kill_profile_chrome(prof)
-            proc = _start_chrome(port, prof, headless)
-        if not proc:
-            last_err = TurnstileError("chrome 기동 실패(디버그 포트 응답 없음)")
-            continue
+        # 점유된 공용 프로필의 Chrome은 건드리지 않는다. 재시도는 호출마다 고유한 프로필로 한다.
+        isolated_dir = tempfile.mkdtemp(prefix="mpdex-turnstile-") if attempt else None
+        prof = Path(isolated_dir) if isolated_dir else pdir
+        proc = None
         try:
+            proc, endpoint = await _start_chrome(_free_port(), prof, headless, deadline)
             async with async_playwright() as p:
                 browser = None
-                for _try in range(6):
-                    try:
-                        browser = await asyncio.wait_for(
-                            p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}"), timeout=30
-                        )
-                        break
-                    except Exception as e:  # noqa: BLE001
-                        _log("connect retry", _try, str(e)[:80])
-                        await asyncio.sleep(1.0)
-                if browser is None:
-                    raise TurnstileError("CDP 연결 실패(디버그 포트 접속 불가)")
-                ctx = browser.contexts[0]
-                # patchright가 connect_over_cdp로 붙을 때 기존 페이지 재사용은 느리고 불안정 →
-                # 새 탭을 열어 작업한다(프로필 쿠키는 그대로 공유됨).
-                await asyncio.sleep(2.0)
-                page = await ctx.new_page()
-                page.set_default_timeout(20_000)
                 try:
-                    return await _harvest(page, ctx, deadline, action)
-                finally:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TurnstileError("CDP 연결 전 전체 제한시간 초과")
                     try:
-                        await browser.close()  # CDP attach: 브라우저 프로세스는 _kill에서 종료
-                    except Exception:
-                        pass
+                        # 드라이버 자체의 timeout으로 연결을 종료한다. wait_for로 Python 대기만
+                        # 취소한 뒤 같은 드라이버에 연결 요청을 여섯 번 중첩시키지 않는다.
+                        browser = await p.chromium.connect_over_cdp(
+                            endpoint, timeout=min(30.0, remaining) * 1000
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        raise TurnstileError(f"CDP 연결 실패: {type(e).__name__}: {e}") from e
+                    ctx = browser.contexts[0]
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TurnstileError("CDP 연결 후 전체 제한시간 초과")
+                    page = await asyncio.wait_for(ctx.new_page(), timeout=remaining)
+                    page.set_default_timeout(20_000)
+                    return await asyncio.wait_for(
+                        _harvest(page, ctx, deadline, action),
+                        timeout=max(0.001, deadline - time.monotonic()),
+                    )
+                finally:
+                    if browser is not None:
+                        try:
+                            await asyncio.wait_for(browser.close(), timeout=5)
+                        except Exception:
+                            pass
         except Exception as e:  # noqa: BLE001
             last_err = e
             _log("attempt failed:", type(e).__name__, e)
             if attempt == 0:
                 print(f"[variational] turnstile 시도 실패({e}) → 1회 재시도")
         finally:
-            _kill(proc)
+            await loop.run_in_executor(None, _kill, proc)
+            if isolated_dir:
+                # 이번 호출에서 만든 임시 디렉터리만 제거한다.
+                await loop.run_in_executor(None, shutil.rmtree, isolated_dir, True)
     raise TurnstileError(f"Turnstile 해결 실패: {last_err}")
 
 
