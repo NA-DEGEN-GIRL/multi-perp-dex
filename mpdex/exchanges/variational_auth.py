@@ -467,7 +467,9 @@ class VariationalAuth:
             print(f"[variational] WSL에서 Windows 브라우저 사용 시: http://<WSL_IP>:{port}")
             if open_browser:
                 try:
-                    webbrowser.open(url)
+                    # Windows ShellExecute가 Qt 이벤트를 재진입시키면 아직 실행 중인
+                    # asyncio Task 때문에 accept/warm-up 콜백이 유실된다. 별도 스레드에서 연다.
+                    await asyncio.get_running_loop().run_in_executor(None, webbrowser.open, url)
                 except Exception:
                     pass
             await login_event.wait()
