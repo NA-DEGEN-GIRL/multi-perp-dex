@@ -333,11 +333,17 @@ async def _solve_browser(
     for attempt in range(2):
         if time.monotonic() >= deadline:
             break
-        # 점유된 공용 프로필의 Chrome은 건드리지 않는다. 재시도는 호출마다 고유한 프로필로 한다.
-        isolated_dir = tempfile.mkdtemp(prefix="mpdex-turnstile-") if attempt else None
-        prof = Path(isolated_dir) if isolated_dir else pdir
+        runtime_dir = None
         proc = None
         try:
+            # Windows에서 Node의 시스템 TEMP 접근이 거부될 수 있다. CDP 작업 파일과
+            # 재시도 프로필은 쓰기 가능한 프로필 캐시 아래에 만들고 직접 정리한다.
+            pdir.parent.mkdir(parents=True, exist_ok=True)
+            runtime_dir = Path(tempfile.mkdtemp(prefix="mpdex-turnstile-", dir=pdir.parent))
+            artifacts_dir = runtime_dir / "artifacts"
+            artifacts_dir.mkdir()
+            # 점유된 공용 프로필의 Chrome은 건드리지 않는다.
+            prof = runtime_dir / "profile" if attempt else pdir
             proc, endpoint = await _start_chrome(_free_port(), prof, headless, deadline)
             async with async_playwright() as p:
                 browser = None
@@ -349,7 +355,8 @@ async def _solve_browser(
                         # 드라이버 자체의 timeout으로 연결을 종료한다. wait_for로 Python 대기만
                         # 취소한 뒤 같은 드라이버에 연결 요청을 여섯 번 중첩시키지 않는다.
                         browser = await p.chromium.connect_over_cdp(
-                            endpoint, timeout=min(30.0, remaining) * 1000
+                            endpoint, artifacts_dir=str(artifacts_dir),
+                            timeout=min(30.0, remaining) * 1000,
                         )
                     except Exception as e:  # noqa: BLE001
                         raise TurnstileError(f"CDP 연결 실패: {type(e).__name__}: {e}") from e
@@ -376,9 +383,9 @@ async def _solve_browser(
                 print(f"[variational] turnstile 시도 실패({e}) → 1회 재시도")
         finally:
             await loop.run_in_executor(None, _kill, proc)
-            if isolated_dir:
+            if runtime_dir:
                 # 이번 호출에서 만든 임시 디렉터리만 제거한다.
-                await loop.run_in_executor(None, shutil.rmtree, isolated_dir, True)
+                await loop.run_in_executor(None, shutil.rmtree, runtime_dir, True)
     raise TurnstileError(f"Turnstile 해결 실패: {last_err}")
 
 

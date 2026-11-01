@@ -20,7 +20,9 @@ class TurnstileTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix="mpdex-chrome-test-")
         self.addCleanup(directory.cleanup)
-        self.profile = Path(directory.name)
+        self.cache = Path(directory.name)
+        self.profile = self.cache / "persistent-profile"
+        self.profile.mkdir()
 
     async def test_startup_io_does_not_block_event_loop(self):
         proc = MagicMock()
@@ -113,6 +115,44 @@ class TurnstileTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(call.args[0], ENDPOINT)
             self.assertGreater(call.kwargs["timeout"], 0)
             self.assertLessEqual(call.kwargs["timeout"], 30000)
+        self.assertEqual(list(self.cache.iterdir()), [self.profile])
+
+    async def test_cdp_and_retry_work_without_system_temp(self):
+        page = MagicMock()
+        context = SimpleNamespace(new_page=AsyncMock(return_value=page))
+        browser = SimpleNamespace(contexts=[context], close=AsyncMock())
+        artifacts = []
+        marker = self.profile / "keep.txt"
+        marker.write_text("persistent profile", encoding="utf-8")
+
+        async def connect(endpoint, *, artifacts_dir, timeout):
+            path = Path(artifacts_dir)
+            self.assertTrue(path.is_dir())
+            self.assertEqual(path.parent.parent, self.cache.resolve())
+            (path / "trace.txt").write_text("temporary artifact", encoding="utf-8")
+            artifacts.append(path)
+            if len(artifacts) == 1:
+                raise RuntimeError("retry with a separate profile")
+            return browser
+
+        manager = self.fake_playwright(AsyncMock(side_effect=connect))
+        start = AsyncMock(return_value=(MagicMock(), ENDPOINT))
+        with patch.object(turnstile, "available", return_value=True), \
+             patch.object(turnstile, "_start_chrome", new=start), \
+             patch.object(turnstile, "_kill"), \
+             patch.object(turnstile, "_harvest", new=AsyncMock(return_value=turnstile.CaptchaSolution("offline"))), \
+             patch("tempfile.gettempdir", side_effect=PermissionError("system TEMP is unavailable")), \
+             patch("patchright.async_api.async_playwright", return_value=manager):
+            result = await turnstile._solve_browser(headless=True, timeout_s=5, profile_dir=self.profile)
+
+        self.assertEqual(result.token, "offline")
+        self.assertEqual(len(artifacts), 2)
+        self.assertNotEqual(artifacts[0], artifacts[1])
+        self.assertEqual(start.await_args_list[1].args[1].parent, artifacts[1].parent)
+        self.assertTrue(all(not path.parent.exists() for path in artifacts))
+        self.assertEqual(marker.read_text(encoding="utf-8"), "persistent profile")
+        self.assertEqual(list(self.cache.iterdir()), [self.profile])
+        browser.close.assert_awaited_once()
 
     async def test_cancel_harvest_closes_browser_and_reaps_process(self):
         page = MagicMock()
@@ -139,6 +179,7 @@ class TurnstileTests(unittest.IsolatedAsyncioTestCase):
         browser.close.assert_awaited_once()
         manager.__aexit__.assert_awaited_once()
         kill.assert_called_once_with(proc)
+        self.assertEqual(list(self.cache.iterdir()), [self.profile])
 
     async def test_command_cancellation_kills_and_drains_child(self):
         started = asyncio.Event()

@@ -25,7 +25,7 @@ dependencies = [
   "cairo-lang==0.13.5",
   "msgpack==1.1.2",
   # Variational 로그인: Cloudflare Turnstile 자동 해결(시스템 Chrome + CDP). 브라우저 없이도 동작은 가능
-  "patchright>=1.49",
+  "patchright>=1.61",  # connect_over_cdp(artifacts_dir=...) 지원
   "eth-account>=0.13",
   "eth-utils>=5",
 

@@ -338,10 +338,12 @@ Variational 웹은 `/api/auth/login` 앞에 Cloudflare Managed Challenge + Turns
 - Turnstile은 SIWE 메시지 발급 **전에** 미리 해결한다(메시지 유효시간 60초).
 - 사전 해결과 `Get Message` 요청은 같은 작업을 기다린다. 로그인 취소 시 해결 작업과 로컬 서버도 종료한다.
 - 공용 Chrome 프로필이 사용 중이면 독립된 임시 프로필로 재시도한다. 다른 실행의 Chrome을 강제 종료하지 않는다.
+- CDP 작업 파일과 재시도 프로필은 프로필 경로의 상위 캐시 폴더(기본 `.cache`)에 생성하고 종료 시 정리한다.
+  Windows에서 Node의 시스템 `Temp` 폴더 생성이 `EPERM`으로 막히는 경우에도 해당 경로에 의존하지 않는다.
 
 필요 사항:
 ```bash
-pip install patchright        # Chrome은 시스템 설치본을 사용
+pip install "patchright>=1.61"  # artifacts_dir 지원 필요. Chrome은 시스템 설치본을 사용
 ```
 환경변수/옵션으로 모드를 바꿀 수 있다:
 

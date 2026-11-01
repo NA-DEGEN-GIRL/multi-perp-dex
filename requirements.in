@@ -15,5 +15,5 @@ fastecdsa @ https://files.pythonhosted.org/packages/88/e4/0081bef22304409919e27e
 x10-python-trading-starknet
 eth-account
 eth-utils
-patchright
+patchright>=1.61
 
